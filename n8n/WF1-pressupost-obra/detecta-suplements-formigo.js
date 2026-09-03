@@ -112,9 +112,12 @@ function actualitzaResum(resumOriginal, client, base, suplCodis) {
     let nova = 'HA-' + haNou + '/' + consNou + '/' + aridNou + '/' + expNou;
     if (tags.length) nova += '+' + tags.join('+');
     text = text.slice(0, m.index) + nova + text.slice(m.index + m[0].length);
-  } else if (tags.length) {
-    text = text + ' ' + tags.join(' ');
   }
+  // FIX (2026-09-03): si aquest tros de text (el titol, o el text contractual) no mostra
+  // enlloc la designacio del formigo (p.ex. partides com "FORMACIÓN VIGA DE CORONACIÓN
+  // 55X70CM NV." que no la porten al titol), NO s'hi afegeix l'etiqueta solta -- abans
+  // quedava penjada al final sense cap designacio al costat ("...NV. HIDROFUGO"), fora de
+  // context. Sense el patro "HA-XX/Y/ZZ/XCn" on enganxar-la, es deixa el text tal qual.
   return text;
 }
 

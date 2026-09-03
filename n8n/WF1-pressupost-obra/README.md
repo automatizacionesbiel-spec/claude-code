@@ -5,6 +5,58 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 3: acer/encofrado text placement, a cement-dosage false positive, and a new formwork-quantity node
+
+Reported from two more generated items ("104"-family foundation concrete and
+"502" coronation beam), using a real client spreadsheet
+(`Amarradors_Lote_1_V2_Estruc._horm.xlsx`):
+
+1. **Cement dosage mistaken for steel quantity.** `detecta-acer.js`'s
+   keyword-proximity window (from change 2) was wide enough that a cement
+   dosage mention ("...una quantitat de ciment de 350 kg/m3 ... armadura
+   AP500 S d'acer...") sometimes fell within reach of an acer keyword,
+   producing 300/350 kg instead of the real 60/80 kg. Fixed by explicitly
+   excluding any "`<num> kg`" that has "ciment"/"cemento"/"cement" within
+   25 characters, before checking for acer keywords.
+2. **Acer text placement.** When the client-specified quantity *is* known
+   but the base item's text has no pre-existing acer line, the fixed
+   phrase was always appended after "NO INCLUYE" — even though the item
+   does include the steel. It's now inserted inside the "INCLUYE" section
+   instead. When the quantity is *not* known and the base *does* already
+   carry its own acer line (now correctly detected even without the word
+   "Estimada", e.g. "Q=  kg/m3."), that line is deleted and the generic
+   fallback phrase is appended after "NO INCLUYE" — avoiding the previous
+   bug where both lines coexisted as duplicates.
+3. **Title/text tag fallback removed.** `actualitzaResum` (from change 1)
+   no longer appends an additive tag (e.g. "HIDROFUGO") as a trailing word
+   when the concrete designation pattern isn't present at all in that
+   piece of text — some item titles (like "FORMACIÓN VIGA DE CORONACIÓN")
+   never show it, so the tag has nothing to attach to.
+4. **New: `detecta-encofrat.js`.** Some base items carry a generic default
+   formwork estimate in their own text ("...caras.Q.estimada= 5.2
+   m2/m3."), unrelated to the actual project. This new node detects a
+   real client-specified value ("amb una quantia d'encofrat 6 m2/m3");
+   `genera-bc3.js` substitutes it into the existing placeholder when
+   found, or strips the quantity clause entirely (keeping the rest of the
+   sentence) when the client didn't specify one — never showing the
+   generic default as if it were real. Wired into the existing node chain
+   as `Detecta acer` → `Detecta encofrat` → `Genera BC3`.
+
+All four were validated with a standalone simulation against the real base
+catalog text and client wording for both items before being pushed.
+
+### Note on deterministic regex vs. AI extraction
+
+The user asked whether these free-text quantity extractions (acer, mallat,
+encofrat) might be better done via an AI call (the workflow already has one,
+"Enriquiment IA"), given how variable client wording is. Kept the
+deterministic regex approach for now: once the cement-dosage exclusion was
+added, it correctly handles every real case checked (multiple items, several
+phrasings), matches the existing "Detecta *" node pattern and its documented
+philosophy (deterministic first, AI review as a fallback for what can't be
+determined safely), and avoids adding per-row LLM latency/cost. Worth
+revisiting if more parsing edge cases keep surfacing.
+
 ## Change 2: real steel quantity and mesh size from variable client text
 
 Reported issues, from a Presto screenshot of a generated item (`301.S1`,

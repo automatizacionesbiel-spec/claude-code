@@ -103,6 +103,17 @@ try {
     acerPerOrdre[Number(s.ordre)] = s;
   }
 } catch (e) {}
+// Quantitat real d'encofrat (m2/m3), quan el client la dona -- s'aplica sempre que el text
+// de la partida porti el placeholder generic "Q.estimada= X m2/m3", no nomes quan hi ha
+// altres suplements (formigo/mallat/acer).
+const encofratPerOrdre = {};
+try {
+  for (const it of $('Detecta encofrat').all()) {
+    const s = it.json || {};
+    if (s.ordre === undefined || s.ordre === '') continue;
+    encofratPerOrdre[Number(s.ordre)] = s;
+  }
+} catch (e) {}
 
 const entries = {};
 const orderKeys = [];
@@ -151,6 +162,7 @@ for (const r of files) {
     const supl = suplPerOrdre[Number(r.ordre)];
     const mallat = mallatPerOrdre[Number(r.ordre)];
     const acer = acerPerOrdre[Number(r.ordre)];
+    const encofrat = encofratPerOrdre[Number(r.ordre)];
     // injAbans (formigo/mallazo) van AL COSTAT del material que suplementen, sempre per
     // sobre del %24. injSota (acer) va SEMPRE per sota del %24, mai per sobre.
     let injAbans = [];
@@ -162,6 +174,8 @@ for (const r of files) {
     let mallatTextExtra = null;
     let mallatMida = null;
     let mallatCodisNous = null;
+    const encofratQtyClient = (encofrat && String(encofrat.codi_base) === final
+      && encofrat.qty_client !== undefined && encofrat.qty_client !== null) ? encofrat.qty_client : null;
     if (supl && String(supl.codi_base) === final && Array.isArray(supl.suplement_codis)
       && supl.suplement_codis.length && supl.suplement_codis.every((sc) => cat[sc] || con[sc])) {
       const rend = Number(supl.suplement_rendiment) || 0;
@@ -317,20 +331,54 @@ for (const r of files) {
             text = inserirDinsIncluye(text, mallatTextExtra);
           }
         }
-        // FIX (2026-09-03): si el text de la partida JA porta la seva propia linia d'acer
-        // amb un forat "Q.Estimada= KG/M2" (o ja omplert, p.ex. "Q.estimada=1,5kg/m2."), s'hi
-        // substitueix la quantitat real del client -- abans sempre s'afegia una linia nova
-        // (gairebe duplicada) al final de tot, deixant el forat buit i semblant que l'acer
-        // "no s'inclou". Nomes quan la base NO porta ja aquesta linia es fa servir la frase
-        // fixa de sempre, afegida a sota de tot (despres del "No incluye").
+        // FIX (2026-09-03, ronda 2): la placeholder d'acer que ja porten algunes bases no
+        // sempre diu "Q.Estimada=" -- n'hi ha que nomes diuen "Q=  kg/m3." (sense
+        // "Estimada"), i el regex antic no ho detectava. Ara "estimad[ao]" es opcional.
+        //
+        // Quatre casos, segons si sabem la quantitat real del client (acerQtyClient) i si
+        // la base ja porta una linia d'acer propia (mQty):
+        // 1. Sabem la quantitat i la base JA porta linia -- se substitueix el forat in situ
+        //    (era el cas que fallava: es duplicava la linia perque el forat no es trobava).
+        // 2. Sabem la quantitat pero la base NO porta cap linia -- l'acer forma part del
+        //    que s'inclou, aixi que s'afegeix DINS de l'INCLUYE (abans mai; sempre queia
+        //    despres del "No incluye" com si no s'inclogues).
+        // 3. NO sabem la quantitat pero la base SI porta una linia (que quedaria buida o
+        //    amb un valor no fiable) -- s'elimina la linia sencera i s'afegeix la frase
+        //    fixa a sota de tot (aixi no queden dues mencions d'acer alhora).
+        // 4. NO sabem la quantitat i la base tampoc porta cap linia -- nomes s'afegeix la
+        //    frase fixa a sota de tot (comportament de sempre).
         if (acerTextExtra) {
-          const mQty = acerQtyClient !== null ? text.match(/q\.?\s*estimad[ao]\s*=?\s*[\d.,]*\s*kg\s*\/\s*(m2|m3|ml|ud|und|unidad|unitat)(\.?)/i) : null;
-          if (mQty) {
+          const acerPlaceholderRe = /q\.?\s*(?:estimad[ao])?\s*=?\s*[\d.,]*\s*kg\s*\/\s*(m2|m3|ml|ud|und|unidad|unitat)(\.?)/i;
+          const mQty = text.match(acerPlaceholderRe);
+          if (acerQtyClient !== null && mQty) {
             const qtyStr = String(acerQtyClient).replace('.', ',');
             text = text.slice(0, mQty.index) + 'Q.Estimada=' + qtyStr + 'kg/' + mQty[1] + (mQty[2] || '') + text.slice(mQty.index + mQty[0].length);
+          } else if (acerQtyClient !== null) {
+            text = inserirDinsIncluye(text, acerTextExtra);
+          } else if (mQty) {
+            const iniciLinia = text.lastIndexOf('-.', mQty.index);
+            let fiLinia = text.indexOf('\n', mQty.index);
+            fiLinia = fiLinia === -1 ? text.length : fiLinia + 1;
+            if (iniciLinia !== -1) text = text.slice(0, iniciLinia) + text.slice(fiLinia);
+            text = (text ? text + '\n' : '') + acerTextExtra;
           } else {
             text = (text ? text + '\n' : '') + acerTextExtra;
           }
+        }
+      }
+
+      // FIX (2026-09-03): la quantitat d'encofrat que ja porten alguns textos base
+      // ("...caras.Q.estimada= 5.2 m2/m3.") es un valor GENERIC de plantilla, no dades del
+      // projecte -- si el client SI la dona, se substitueix; si no la dona, es treu nomes
+      // la quantitat i es deixa la resta de la frase (mai un numero fals). S'aplica sempre,
+      // no nomes quan hi ha altres suplements (formigo/mallat/acer) a la partida.
+      const mEncofrat = text.match(/q\.?\s*(?:estimad[ao])?\s*=?\s*[\d.,]*\s*m2\s*\/\s*m3(\.?)/i);
+      if (mEncofrat) {
+        if (encofratQtyClient !== null) {
+          const qtyStr = String(encofratQtyClient).replace('.', ',');
+          text = text.slice(0, mEncofrat.index) + 'Q.estimada=' + qtyStr + 'm2/m3' + (mEncofrat[1] || '') + text.slice(mEncofrat.index + mEncofrat[0].length);
+        } else {
+          text = text.slice(0, mEncofrat.index) + text.slice(mEncofrat.index + mEncofrat[0].length);
         }
       }
 

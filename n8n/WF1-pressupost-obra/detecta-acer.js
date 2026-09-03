@@ -22,14 +22,25 @@ const CODI_ACER = cataleg.find((c) => /acero corrugado.*elementos estructurales/
 // el numero i la paraula clau). Per cobrir qualsevol ordre/redaccio: es busquen TOTES les
 // ocurrencies "<num> kg[/unitat]" del text i es retorna la primera que tingui una paraula
 // clau d'acer a prop (abans O despres, finestra de 70 caracters -- calibrada contra frases
-// reals dels excels dels clients) -- aixi es descarten quantitats de kg no relacionades
-// (p.ex. dosificacio de ciment en kg/m3) perque no tenen cap d'aquestes paraules a la vora.
+// reals dels excels dels clients).
+// FIX (2026-09-03, ronda 2): amb la finestra de 70 caracters, la dosificacio de ciment
+// ("...una quantitat de ciment de 350 kg/m3 i relacio aigua ciment =< 0.5 abocat amb
+// cubilot i armadura AP500 S d'acer...") queda sovint a menys de 70 caracters de
+// "armadura"/"acer" -- es detectava com si fos la quantitat d'acer (provat amb casos reals
+// de l'excel: donava 300/350 en lloc de 80/60). Ara, abans de mirar si hi ha una paraula
+// clau d'acer a la vora, es descarta directament qualsevol "<num> kg" que tingui la
+// paraula "ciment"/"cemento" a menys de 25 caracters -- es una dosificacio, mai la
+// quantitat d'acer, independentment de si "acer" tambe hi cau a prop per casualitat.
 const ACER_KEYWORDS_RE = /\b(?:acer|acero|armadura|ferralla|corrugad[oa]s?|b[\s-]?500|ap[\s-]?500)\b/;
+const CIMENT_KEYWORDS_RE = /\b(?:ciment|cemento|cement)\b/;
 function extreuQuantitatAcer(text) {
   const t = norm(text);
   const kgRe = /(\d+(?:[.,]\d+)?)\s*kg(?:\s*\/\s*(?:m2|m3|ml|ut|ud))?/g;
   let m;
   while ((m = kgRe.exec(t))) {
+    const iniciCiment = Math.max(0, m.index - 25);
+    const finalCiment = Math.min(t.length, m.index + m[0].length + 25);
+    if (CIMENT_KEYWORDS_RE.test(t.slice(iniciCiment, finalCiment))) continue;
     const inici = Math.max(0, m.index - 70);
     const final = Math.min(t.length, m.index + m[0].length + 70);
     if (ACER_KEYWORDS_RE.test(t.slice(inici, final))) return parseFloat(m[1].replace(',', '.'));
