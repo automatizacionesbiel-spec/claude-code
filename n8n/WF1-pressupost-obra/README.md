@@ -5,6 +5,46 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 5: read every sheet of an uploaded Excel, and a critical trigger-chain bug
+
+Two issues from the same session:
+
+1. **BC3 not generated at all.** The most recent execution stopped after
+   "Desa diccionari" and never reached "Genera BC3"/"Envia BC3". Root cause:
+   the new "Detecta encofrat" node (change 4) is the last link in a
+   sequential trigger chain (`Detecta suplements formigo` → `Detecta
+   mallat` → `Detecta acer` → `Detecta encofrat` → `Genera BC3`) — every
+   other node in that chain has `alwaysOutputData: true` set specifically
+   so the chain keeps firing even when a node finds nothing to report;
+   the new node was missing it, so on a project where no row mentioned an
+   explicit formwork quantity, it returned zero items and n8n never
+   triggered `Genera BC3` at all. Fixed by setting `alwaysOutputData: true`
+   on it, matching the rest of the chain.
+2. **Only the first sheet of an uploaded Excel was ever read.** The form's
+   own description used to instruct users to manually export each
+   relevant tab as a separate .xlsx file, because `extractFromFile`
+   (n8n's xlsx reader) only supports one sheet per call and there's no
+   built-in "read all sheets" option. `separa-fitxers.js` now detects
+   every sheet name in each uploaded .xlsx by reading the ZIP's
+   `xl/workbook.xml` directly (using only Node's built-in `zlib`, no
+   external library) and expands each file into one item per sheet, each
+   still carrying the same binary — exactly as if every sheet had been
+   uploaded as its own file, which is what the rest of the pipeline
+   (`Fitxers loop`, a Split-In-Batches loop; `Intenta parseig
+   determinista`, which only knows how to parse one coherent table per
+   loop iteration) already expects. `Llegeix amidaments` reads the right
+   sheet via a `sheetName` expression sourced from that item. Any failure
+   in sheet detection falls back to the old single-sheet behavior rather
+   than breaking the upload. The form description was updated to drop the
+   now-unnecessary manual-export instruction.
+
+The sheet-detection and full item-expansion logic were validated locally
+against both real uploaded files (1 sheet and 2 sheets) and against a
+simulated dual-file upload, matching expected output exactly. The
+critical-bug fix and the sheet expansion could not be end-to-end tested
+through an actual form submission from here — worth a real upload check
+after this lands.
+
 ## Change 3: acer/encofrado text placement, a cement-dosage false positive, and a new formwork-quantity node
 
 Reported from two more generated items ("104"-family foundation concrete and
