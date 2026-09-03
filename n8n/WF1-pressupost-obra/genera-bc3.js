@@ -158,7 +158,10 @@ for (const r of files) {
     let motius = [];
     let formigoCodiRef = null;
     let acerTextExtra = null;
+    let acerQtyClient = null;
     let mallatTextExtra = null;
+    let mallatMida = null;
+    let mallatCodisNous = null;
     if (supl && String(supl.codi_base) === final && Array.isArray(supl.suplement_codis)
       && supl.suplement_codis.length && supl.suplement_codis.every((sc) => cat[sc] || con[sc])) {
       const rend = Number(supl.suplement_rendiment) || 0;
@@ -173,14 +176,20 @@ for (const r of files) {
       // Frase demanada per l'usuari: quan hi ha mallazo, s'afegeix DINS de l'INCLUYE
       // (abans del "No incluye"), amb les mides reals que digui el client.
       mallatTextExtra = mallat.text_extra || null;
+      // FIX (2026-09-03): mides reals del mallat (per substituir-les al text i, si cal,
+      // saber quin codi de material/col·locacio ha de reemplaçar el que ja porti la base.
+      mallatCodisNous = mallat.triples.map((t) => t.codi);
+      mallatMida = (mallat.a && mallat.b && mallat.d) ? { a: mallat.a, b: mallat.b, d: mallat.d } : null;
     }
     if (acer && String(acer.codi_base) === final && Array.isArray(acer.triples)
       && acer.triples.length && acer.triples.every((t) => cat[t.codi] || con[t.codi])) {
       for (const t of acer.triples) injSota.push(t);
       motius.push('Incluye acero corrugado: ' + acer.motiu + '.');
       // Frase fixa demanada per l'usuari: sempre que es posa l'acer, s'afegeix a sota de
-      // tot del text contractual (despres del "No incluye").
+      // tot del text contractual (despres del "No incluye") -- NOMES quan la base no te ja
+      // la seva propia linia d'acer (vegeu la substitucio mes avall).
       acerTextExtra = acer.text_extra || null;
+      acerQtyClient = (acer.qty_client !== undefined && acer.qty_client !== null) ? acer.qty_client : null;
     }
     const injOk = injAbans.length > 0 || injSota.length > 0;
     const injKey = injOk ? [...injAbans, ...injSota].map((t) => t.codi + '@' + fmt(t.rendiment)).sort().join('+') : '';
@@ -228,6 +237,33 @@ for (const r of files) {
           return true;
         };
 
+        // FIX (2026-09-03): el mallat de la base (si en porta un, d'una mida/diametre
+        // diferent del que demana el client) s'ha de SUBSTITUIR, no sumar-hi a sobre --
+        // abans es fusionava/afegia sempre, deixant la malla vella i la nova alhora.
+        // Per cada codi nou de mallat: si ja hi es amb el MATEIX codi (normalment la
+        // col·locacio, que nomes depen del diametre i sol coincidir), es deixa tal qual,
+        // sense sumar-hi. Si es un codi DIFERENT (el material ha canviat de mida), s'elimina
+        // qualsevol altra linia de la mateixa familia (material o col·locacio de mallat) que
+        // ja hi hagues -- i si en tenia una, s'hereta el seu randiment (marge de solapament
+        // ja calibrat a la base) en lloc del generic calculat a "Detecta mallat".
+        if (mallatCodisNous) {
+          const esMallatMaterial = (kk) => { const s = con[kk] || cat[kk]; return !!s && /malla(?:zo)?(?:\s+electrosoldada)?\s*\d+\s*x\s*\d+/.test(norm(s.resum)); };
+          const esMallatColocacio = (kk) => { const s = con[kk] || cat[kk]; return !!s && /colocacion\s*(?:de\s*)?malla(?:zo)?/.test(norm(s.resum)); };
+          for (const t of injAbans.filter((x) => mallatCodisNous.includes(x.codi))) {
+            if (troba(t.codi) !== -1) { injAbans = injAbans.filter((x) => x !== t); continue; }
+            const esMaterial = esMallatMaterial(t.codi);
+            for (let i = triples.length - 1; i >= 0; i--) {
+              const kk = triples[i][0];
+              if (kk === t.codi) continue;
+              const mateixaFamilia = esMaterial ? esMallatMaterial(kk) : esMallatColocacio(kk);
+              if (mateixaFamilia) {
+                t.rendiment = Number(triples[i][2]) || t.rendiment;
+                triples.splice(i, 1);
+              }
+            }
+          }
+        }
+
         // FIX (2026-09-03): abans cada injeccio recalculava idxRef des de zero i sempre
         // inserien JUST DESPRES del material de formigo -- amb mes d'un suplement aixo
         // les deixava en ordre INVERS al de injAbans (la ultima injectada quedava mes a
@@ -268,13 +304,34 @@ for (const r of files) {
         // manté calculat (per si es reaprofita en un altre lloc mes endavant) pero no
         // s'aplica enlloc del text.
         if (supl && supl.text_nou) text = supl.text_nou;
-        // Fase 6 (2026-09-02): quan hi ha mallazo, s'afegeix DINS de l'INCLUYE (abans del
-        // "No incluye"), amb les mides reals -- s'aplica ABANS de l'acer perque l'acer
-        // sempre ha de quedar al final de tot, despres d'aquesta insercio.
-        if (mallatTextExtra) text = inserirDinsIncluye(text, mallatTextExtra);
-        // Fase 5 (2026-09-02): sempre que es posa l'acer, s'afegeix aquesta frase fixa a
-        // sota de tot del text contractual (despres del "No incluye").
-        if (acerTextExtra) text = (text ? text + '\n' : '') + acerTextExtra;
+        // FIX (2026-09-03): si el text de la partida JA porta una linia de mallazo pròpia
+        // (p.ex. "...mallazo 15x15Ø5mm."), es SUBSTITUEIXEN nomes els numeros per les mides
+        // reals -- abans sempre s'afegia una linia nova a sobre, deixant les dues mides al
+        // text alhora. Nomes si NO hi ha cap linia de mallazo ja feta es fa servir la frase
+        // fixa de siempre, afegida DINS de l'INCLUYE (abans del "No incluye").
+        if (mallatTextExtra) {
+          const mMida = mallatMida ? text.match(/mallazo\s*(\d+)\s*x\s*(\d+)\s*[øo]\s*(\d+)\s*mm/i) : null;
+          if (mMida) {
+            text = text.slice(0, mMida.index) + 'mallazo ' + mallatMida.a + 'x' + mallatMida.b + 'Ø' + mallatMida.d + 'mm' + text.slice(mMida.index + mMida[0].length);
+          } else {
+            text = inserirDinsIncluye(text, mallatTextExtra);
+          }
+        }
+        // FIX (2026-09-03): si el text de la partida JA porta la seva propia linia d'acer
+        // amb un forat "Q.Estimada= KG/M2" (o ja omplert, p.ex. "Q.estimada=1,5kg/m2."), s'hi
+        // substitueix la quantitat real del client -- abans sempre s'afegia una linia nova
+        // (gairebe duplicada) al final de tot, deixant el forat buit i semblant que l'acer
+        // "no s'inclou". Nomes quan la base NO porta ja aquesta linia es fa servir la frase
+        // fixa de sempre, afegida a sota de tot (despres del "No incluye").
+        if (acerTextExtra) {
+          const mQty = acerQtyClient !== null ? text.match(/q\.?\s*estimad[ao]\s*=?\s*[\d.,]*\s*kg\s*\/\s*(m2|m3|ml|ud|und|unidad|unitat)(\.?)/i) : null;
+          if (mQty) {
+            const qtyStr = String(acerQtyClient).replace('.', ',');
+            text = text.slice(0, mQty.index) + 'Q.Estimada=' + qtyStr + 'kg/' + mQty[1] + (mQty[2] || '') + text.slice(mQty.index + mQty[0].length);
+          } else {
+            text = (text ? text + '\n' : '') + acerTextExtra;
+          }
+        }
       }
 
       entries[key] = { code, ud: String(c.ud || ''), resum, text, preu, desc, capKey, qty: 0, lines: [] };
