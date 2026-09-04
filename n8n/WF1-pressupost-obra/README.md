@@ -5,6 +5,49 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 9: acer/mallat duplicate injection, and a workflow regression found in passing
+
+1. **Acer injected twice when the client already itemizes it separately.** Requested: if
+   the client's Excel already has an independent line item dedicated to acer for a given
+   element family (e.g. a standalone "Acero B500S en muros" row, matched directly to the
+   acer catalog code), the formación/vertido composite items of that same family
+   (muros/pilares/forjados) must not also get acer injected into their own decomposition
+   — it's already accounted for separately. Since the acer catalog code itself sits under
+   a generic "ACERO" chapter (not a family-specific one), which family an independent acer
+   line covers can only be read from the *client's own text* for that row — unlike a
+   composite item, whose family comes from the base catalog's chapter (same pattern
+   `detecta-suplements-alcada.js` already uses). `detecta-acer.js` now builds the set of
+   families that already have an independent acer line, and skips injection for any
+   composite/vertido item in one of those families. Validated with a synthetic scenario
+   matching the user's own example (independent "Acero B500S en muros" line → both
+   "Formación de muros" and "Vertido en muros" skip injection; an unrelated "Formación de
+   pilares" item still gets it).
+
+2. **Regression found while implementing the above, unrelated to this request**: the live
+   `Detecta acer` and `Detecta mallat` nodes had reverted to earlier, simpler versions —
+   missing the cement-dosage exclusion and `qty_client` output field (acer), and the
+   wide-window Catalan-diameter parsing plus `a`/`b`/`d` output fields (mallat) — all
+   previously built, validated, and shipped earlier in this same working session (see
+   Change 2 and Change 3 below). `genera-bc3.js`'s real-quantity-substitution logic for
+   both (`acerQtyClient`, `mallatMida`) silently degraded to always using the generic
+   fallback text once these fields stopped being produced, with no error or warning.
+   Restored both nodes from this repo's last-known-good committed version, merging the
+   new acer family-dedup fix on top. Root cause unconfirmed — no changes from this session
+   explain it, so it most likely happened via n8n's own workflow version history outside
+   this repo's tracking. Worth keeping an eye on: if it recurs, the fix each time is to
+   diff the live node against this repo's committed copy before assuming the repo is stale.
+
+3. **Also surfaced, not fixed**: `genera-bc3.js` reads a node called `Detecta encofrat`
+   for a client-specified formwork-quantity substitution (`encofratQtyClient`) — that
+   node does not exist in the live workflow (only the unrelated `Detecta encofrat vertit`
+   does, which fills in missing encofrado/vertido sub-items, not quantities). This repo
+   still has an orphaned `detecta-encofrat.js` file describing what that missing node
+   used to do — it was apparently dropped from the live workflow without the caller in
+   `genera-bc3.js` being updated, so that substitution has been silent dead code (the
+   `try/catch` around `$('Detecta encofrat').all()` swallows the "node not found" error)
+   since at least Change 5. Whether to re-add the node or remove the dead caller code is
+   a product decision for the user, not something to guess at.
+
 ## Change 8: height-supplement phrasing, XC1 exposure downgrade, and phantom "Pendents" rows
 
 A batch of fixes requested together, covering formwork height supplements, concrete

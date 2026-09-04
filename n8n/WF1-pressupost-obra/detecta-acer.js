@@ -48,6 +48,29 @@ function extreuQuantitatAcer(text) {
   return null;
 }
 
+// FIX (2026-09-04): si el client ja porta una partida INDEPENDENT dedicada a l'acer per a
+// un element (p.ex. "Acero B500S en muros" com a linia propia del seu Excel, emparellada
+// directament amb el mateix codi "0.0"), l'acer NO s'ha de tornar a afegir dins la
+// formacio/vertido d'aquell mateix element -- ja queda comptat a la partida a part.
+// Com que el codi "0.0" pertany a un capitol generic "ACERO" del cataleg (no te capitol
+// propi de muros/pilars/forjats), la familia d'una linia INDEPENDENT d'acer nomes es pot
+// saber pel text del CLIENT en aquella fila -- a diferencia de la partida composta, la
+// seva familia si ve del capitol de la base (igual que a "Detecta suplements alcada").
+const FAMILIES = [
+  { keyword: /pilar/ },
+  { keyword: /muro/ },
+  { keyword: /forjado/ }
+];
+const familiesAmbAcerIndependent = new Set();
+if (CODI_ACER) {
+  for (const r of files) {
+    if (!r.codi_base || r.confianca === 'ABSORBIDA') continue;
+    if (String(r.codi_base) !== String(CODI_ACER.codi)) continue;
+    const textClient = norm((r.resum_excel || '') + ' ' + (r.text || ''));
+    for (const fam of FAMILIES) if (fam.keyword.test(textClient)) familiesAmbAcerIndependent.add(fam.keyword.source);
+  }
+}
+
 const out = [];
 if (CODI_ACER) {
   for (const r of files) {
@@ -59,6 +82,12 @@ if (CODI_ACER) {
     const esComposta = r.es_composta === 'x';
     const esVertitOHormigo = /vertido|hormigon/.test(resumNorm) && !/encofr|suplemento/.test(resumNorm);
     if (!esComposta && !esVertitOHormigo) continue;
+
+    if (familiesAmbAcerIndependent.size) {
+      const capBase = norm(c.capitol_desc || c.capitol || '');
+      const familiaActual = FAMILIES.find((f) => f.keyword.test(capBase));
+      if (familiaActual && familiesAmbAcerIndependent.has(familiaActual.keyword.source)) continue;
+    }
 
     const textClient = norm((r.resum_excel || '') + ' ' + (r.text || ''));
     const esLlosaEscala = /losa/.test(textClient) && /escalera/.test(textClient);
@@ -85,4 +114,3 @@ if (CODI_ACER) {
   }
 }
 return out;
-
