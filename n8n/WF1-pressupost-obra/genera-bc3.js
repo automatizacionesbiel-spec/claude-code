@@ -58,7 +58,7 @@ const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toL
 const inserirDinsIncluye = (text, linia) => {
   const t = String(text || '');
   const m = t.match(/no\s*(se\s*)?incluye/i);
-  if (!m) return (t ? t + '\n' : '') + linia;
+  if (!m) return (t ? t.replace(/\s+$/, '') + '\n' : '') + linia;
   return t.slice(0, m.index) + linia + '\n' + t.slice(m.index);
 };
 
@@ -347,6 +347,11 @@ for (const r of files) {
         //    fixa a sota de tot (aixi no queden dues mencions d'acer alhora).
         // 4. NO sabem la quantitat i la base tampoc porta cap linia -- nomes s'afegeix la
         //    frase fixa a sota de tot (comportament de sempre).
+        // FIX (2026-09-03, ronda 3): quan la base acaba amb un salt de linia (habitual: el
+        // seu propi text ja ve amb un "\r\n" final), afegir-hi "text + '\n' + frase" hi
+        // deixava DOS salts seguits -- una linia en blanc lletja abans de la frase fixa.
+        // Ara es retallen els espais/salts finals de "text" abans d'afegir la frase, aixi
+        // sempre queda exactament un salt de linia entre l'ultima linia i la nova.
         if (acerTextExtra) {
           const acerPlaceholderRe = /q\.?\s*(?:estimad[ao])?\s*=?\s*[\d.,]*\s*kg\s*\/\s*(m2|m3|ml|ud|und|unidad|unitat)(\.?)/i;
           const mQty = text.match(acerPlaceholderRe);
@@ -360,9 +365,9 @@ for (const r of files) {
             let fiLinia = text.indexOf('\n', mQty.index);
             fiLinia = fiLinia === -1 ? text.length : fiLinia + 1;
             if (iniciLinia !== -1) text = text.slice(0, iniciLinia) + text.slice(fiLinia);
-            text = (text ? text + '\n' : '') + acerTextExtra;
+            text = (text ? text.replace(/\s+$/, '') + '\n' : '') + acerTextExtra;
           } else {
-            text = (text ? text + '\n' : '') + acerTextExtra;
+            text = (text ? text.replace(/\s+$/, '') + '\n' : '') + acerTextExtra;
           }
         }
       }

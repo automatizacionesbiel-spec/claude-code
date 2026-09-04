@@ -5,6 +5,53 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 6: sandbox-incompatible `zlib`, a blank line in Texto 1, and a bad AI sentinel value
+
+Three issues found from real executions after change 5 shipped:
+
+1. **`Module 'zlib' is disallowed` (execution 110).** n8n's Task Runner
+   sandbox blocks *every* `require()` call, including Node's own built-in
+   modules — not just third-party libraries as assumed when change 5 was
+   written. `separa-fitxers.js`'s `zlib.inflateRawSync` call for
+   decompressing ZIP entries broke the whole upload. Fixed by replacing it
+   with a hand-written, dependency-free DEFLATE (RFC 1951) decoder
+   (`inflateRaw`): bit-level reader, canonical Huffman table builder for
+   both dynamic and fixed blocks, and stored-block passthrough. Validated
+   byte-for-byte against `zlib.inflateRawSync` on all 53 real ZIP entries
+   from two uploaded `.xlsx` files (including a 3.5MB stored entry) plus
+   five synthetic edge cases (repetitive data, random binary, empty input,
+   1-byte input) before shipping — the change-5 note below about using
+   Node's built-in `zlib` is superseded by this.
+2. **Blank line in "Texto 1" before the acer line (Presto screenshot).**
+   When the client's steel quantity isn't known and the base item's own
+   contractual text has no pre-existing acer placeholder, the fixed
+   fallback phrase is appended with `text + '\n' + phrase`. Base catalog
+   texts often already end in their own trailing `\r\n`, so this produced
+   two consecutive line breaks — an empty line above the appended phrase.
+   Fixed in `genera-bc3.js` (`inserirDinsIncluye`'s fallback branch and
+   both acer-appending branches) by trimming trailing whitespace/newlines
+   off the existing text before appending, so exactly one line break
+   separates the last existing line from the new one. Validated against
+   the exact reported scenario (item "101"'s base text + unknown client
+   steel quantity + no existing placeholder) before shipping.
+3. **"EST FOR.xlsx" failed to parse even with AI assistance (execution
+   115).** The AI column-detection step (`Detecta columnes IA`) returned
+   `codigo: -1` for a file whose "código" column had no explicit header
+   text — even though its own stated reasoning correctly identified
+   column 0 as the code/level column by position. `Parseja amidaments`'s
+   existing range guard (`v >= 0`) correctly rejected the out-of-range
+   `-1` and reported the file as unparseable, which is the right
+   fail-safe behavior — but the AI should have reported `0`, not `-1`.
+   Fixed by clarifying `REGLES_EXCEL` (the prompt in `prepara-peticio-
+   columnes-ia.js`, node "Prepara peticio columnes IA"): the AI is now
+   told explicitly to infer `codigo`'s column index from data
+   position/content even without an explicit header — matching how it
+   already does this for `ud`/`resumen`/`canpres` — and to never answer
+   `-1` or any invented value for these four fields; when it genuinely
+   can't identify a column, it should answer `es_amidaments=false`
+   instead. No parsing logic changed — the existing guard against invalid
+   indices was already correct.
+
 ## Change 5: read every sheet of an uploaded Excel, and a critical trigger-chain bug
 
 Two issues from the same session:
@@ -26,8 +73,9 @@ Two issues from the same session:
    (n8n's xlsx reader) only supports one sheet per call and there's no
    built-in "read all sheets" option. `separa-fitxers.js` now detects
    every sheet name in each uploaded .xlsx by reading the ZIP's
-   `xl/workbook.xml` directly (using only Node's built-in `zlib`, no
-   external library) and expands each file into one item per sheet, each
+   `xl/workbook.xml` directly (originally via Node's built-in `zlib`; see
+   change 6 below for why that had to be replaced with a pure-JS decoder)
+   and expands each file into one item per sheet, each
    still carrying the same binary — exactly as if every sheet had been
    uploaded as its own file, which is what the rest of the pipeline
    (`Fitxers loop`, a Split-In-Batches loop; `Intenta parseig
