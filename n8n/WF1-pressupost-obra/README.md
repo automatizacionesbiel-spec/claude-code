@@ -5,6 +5,66 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 8: height-supplement phrasing, XC1 exposure downgrade, and phantom "Pendents" rows
+
+A batch of fixes requested together, covering formwork height supplements, concrete
+exposure class, and two real jobs (825.26, 831.26) with data-quality problems.
+
+1. **Height supplement (`detecta-suplements-alcada.js`) only recognized Spanish/ASCII
+   phrasing.** `extreuAlcada` matched `"H<=Xm"`, `"hasta Xm"`, `"altura de Xm"` — but not
+   Catalan (`"alçada"`, `"fins a"`) or the `≤` unicode comparison operator often pasted
+   from Word. Real client text in either of those forms silently skipped the height
+   supplement even when the working elevation required it. Broadened the regex to cover
+   both languages and the unicode operator. Cross-checked against the live catalog
+   (`base_partides`, 210 rows) that `pilar`/`muro`/`forjado` are the *only* families with
+   a "Suplemento encofrado ... de 3 a Nm" SKU — so the family list itself needed no change.
+2. **XC1 (a *downgrade* from the base's default XC2) was silently dropped**
+   (`detecta-suplements-formigo.js`, `genera-bc3.js`). `EXP_GRUP` only mapped upgrade
+   classes (XC3 and above) to a cost-supplement code; a client-requested XC1 matched
+   nothing, so the title/Texto 1 kept showing the base's XC2. Added an explicit XC1 case:
+   no cost supplement (there's nothing to buy, it's a plain relabel), but the title/text
+   substitution now fires for it — and that substitution had to be pulled out of the
+   `injOk`-only block in `genera-bc3.js`, since a pure relabel with no cost injection
+   never set `injOk`. Validated with synthetic downgrade/no-op/upgrade/combined scenarios.
+3. **Real hidden/junk rows contaminating "Pendents de classificar"** — audited on request
+   for two live jobs:
+   - **Obra 831.26** ("Mano de obra Hormigon.xlsx"): 324 of 335 pending rows were
+     identical phantom entries (`ud="Spc0010"`, empty code/description, qty 0). Root
+     cause: this file's own row-type marker column and its measurement-detail rows (the
+     `Uts./Llargada/Amplada/Alçada` breakdown under each item, exactly like the TCQ/ITEC
+     PDF format in Change 7) tag detail rows with an internal `"SpcNNNN"` code in the "ud"
+     column — `parseExcelGroup`'s `mode3` classifier already special-cased that prefix in
+     its NAT-column path, but not in the synonym/AI-assisted path, so any non-empty "ud"
+     (including `"SpcNNNN"`) was promoted to a full phantom line item.
+   - **Obra 825.26** ("26187_EST FORM.xlsx", a 3.69M€ multi-trade BRCAT rail-corridor
+     budget): 637 of 2,117 pending rows were section-title rows (`codi_excel` =
+     "Capítol"/"Obra elemental"/"Activitat", the literal row-type label, with the real
+     title in `resum_excel` and a section index like `"01"` sitting in `ud`) — the mapped
+     "ud" column being non-empty promoted these headings to phantom partides too. (The
+     other ~1,480 pending rows there are genuine other-trade items — paving, electrical,
+     signage — correctly priced at €0 and out of this company's scope; not a bug.)
+   - Fix: `parseExcelGroup`'s `mode3` row classifier now recognizes both signals before
+     falling back to the old "any non-empty ud ⇒ partida" rule — a `codigo` value that's
+     exactly a known hierarchy-level label (Capítol/Capítulo/Obra elemental/Activitat/
+     Actividad/Partida/Subcapítol) is always a chapter heading regardless of what's in
+     "ud", and a `ud` value matching `/^spc\d/i` is always a detail row regardless of
+     being non-empty. Chapter nesting for the label-based case is now tracked by level
+     rank instead of string-prefix matching, since the same label repeats verbatim at
+     every section of that level (unlike numeric/dotted codes, which do prefix-nest).
+     Validated against the real raw rows from both executions (113 and 119).
+   - **Secondary finding, not fixed here**: for 831.26, the AI column-detection step
+     (`Detecta columnes IA`) answered `headerRow: 1` for a file with no real header
+     row at all, pointing at the first genuine data row ("05.04") — that row is silently
+     skipped as if it were a header, losing exactly one item per file. Lower priority
+     than the phantom-row flood above (one item lost vs. hundreds of phantom ones); worth
+     a follow-up prompt fix in `prepara-peticio-columnes-ia.js` if it recurs.
+   - Also found, unrelated to this batch: `genera-bc3.js` reads `$('Detecta encofrat')`
+     for a client-specified formwork quantity substitution, but no node by that name
+     exists (only `Detecta encofrat vertit`, which is unrelated and does something else)
+     — this has been dead code (always empty, silently caught by its own try/catch) since
+     at least Change 5. Left as-is pending a decision on whether that substitution feature
+     is still wanted; flagged to the user rather than guessing.
+
 ## Change 7: PDF total lines misread as new item codes (TCQ/ITEC format)
 
 Reported: a real PDF upload (execution 117, a Catalan "amidaments" report in TCQ/ITEC

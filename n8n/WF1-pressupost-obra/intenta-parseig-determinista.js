@@ -209,6 +209,21 @@ function parseExcelGroup(rows, aiConfig) {
   const hasMed = colmap['longitud'] !== undefined && colmap['n'] !== undefined;
   const lineParcialKey = colmap['cantidad'] !== undefined ? 'cantidad' : (colmap['parcial'] !== undefined ? 'parcial' : null);
 
+  // FIX (2026-09-04): dos casos reals (obres 825.26 i 831.26) on la columna "codigo" o "ud"
+  // no es fa servir nomes per codis/unitats -- tambe hi porten una etiqueta interna que
+  // abans confonia el classificador de files de mode3 (que nomes mira si "ud" es buit o
+  // no per decidir 'partida' vs 'cap'/'detall'):
+  // 1. Columna "codigo" amb una etiqueta de NIVELL JERARQUIC ("Capítol"/"Obra elemental"/
+  //    "Activitat"/"Partida"...) en lloc d'un codi real, per a les files que fan de titol
+  //    de seccio -- aquestes files SI porten un valor a "ud" (l'index numeric del capitol,
+  //    p.ex. "01"), aixi que abans queien a 'partida' i acabaven com a centenars de
+  //    "partides" buides SENSE MATCH a Pendents de classificar (825.26: 637 files).
+  // 2. Columna "ud" amb un codi intern "SpcNNNN" per marcar files de detall/mesurament
+  //    (Uts/Llargada/Amplada/Alçada) en lloc de deixar-la buida -- abans qualsevol "ud" no
+  //    buit disparava 'partida' igualment, convertint centenars de linies de mesurament en
+  //    "partides" buides SENSE MATCH (831.26: 324 files).
+  const NIVELL_JERARQUIC = { capitol: 1, capitulo: 1, subcapitol: 2, subcapitulo: 2, 'obra elemental': 2, activitat: 3, actividad: 3, partida: 4 };
+
   const out = [];
   let stack = [];
   let cur = null;
@@ -218,10 +233,16 @@ function parseExcelGroup(rows, aiConfig) {
     const ud = g(vals, 'ud');
     const resum = g(vals, 'resumen');
     let rowType;
+    let nivellJerarquic;
     if (mode3) {
-      const udNonEmpty = ud !== null && String(ud).trim() !== '';
-      const codiNonEmpty = codi !== null && String(codi).trim() !== '';
-      if (udNonEmpty) rowType = 'partida';
+      const udRaw = ud !== null ? String(ud).trim() : '';
+      const codiRaw = codi !== null ? String(codi).trim() : '';
+      nivellJerarquic = NIVELL_JERARQUIC[norm(codiRaw)];
+      const esDetallIntern = /^spc\d/i.test(udRaw);
+      const udNonEmpty = udRaw !== '' && !esDetallIntern;
+      const codiNonEmpty = codiRaw !== '';
+      if (nivellJerarquic !== undefined) rowType = 'cap';
+      else if (udNonEmpty) rowType = 'partida';
       else if (codiNonEmpty) rowType = 'cap';
       else rowType = 'detall';
     } else {
@@ -233,8 +254,17 @@ function parseExcelGroup(rows, aiConfig) {
     }
     if (rowType === 'cap') {
       const cc = String(codi ?? '').trim();
-      while (stack.length && !(cc.length > stack[stack.length - 1].codi.length && cc.indexOf(stack[stack.length - 1].codi) === 0)) stack.pop();
-      stack.push({ codi: cc, desc: String(resum ?? '').trim() });
+      if (nivellJerarquic !== undefined) {
+        // Nivell per ETIQUETA (Capítol/Obra elemental/Activitat...): la mateixa paraula es
+        // repeteix identica a cada seccio del mateix nivell, aixi que NO es pot fer servir
+        // com a prefix (a diferencia del cas de sota, on cada codi de capitol es unic i
+        // creixent). Es desapila per NIVELL en lloc de per coincidencia de text.
+        while (stack.length && (stack[stack.length - 1].nivell || 0) >= nivellJerarquic) stack.pop();
+        stack.push({ codi: cc, desc: String(resum ?? '').trim(), nivell: nivellJerarquic });
+      } else {
+        while (stack.length && !(cc.length > stack[stack.length - 1].codi.length && cc.indexOf(stack[stack.length - 1].codi) === 0)) stack.pop();
+        stack.push({ codi: cc, desc: String(resum ?? '').trim() });
+      }
       cur = null;
     } else if (rowType === 'partida') {
       const q = colmap['canpres'] !== undefined ? g(vals, 'canpres') : null;

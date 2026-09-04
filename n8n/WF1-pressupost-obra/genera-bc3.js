@@ -236,6 +236,23 @@ for (const r of files) {
         code = derived;
       }
 
+      // Fase 2 (2026-09-02): en lloc d'afegir "+ SUPLEMENTO HORMIGON" al titol, s'edita
+      // directament la designacio del formigo dins del propi resum (p.ex. XC1 -> XC4).
+      // Fase 3 (2026-09-02): la mateixa substitucio tambe al text contractual (~T, la
+      // "descripcio de l'element" que es veu a Presto), no nomes al titol.
+      // Fase 4 (2026-09-02): NO s'hi afegeix cap "Incluye suplemento..." -- de moment
+      // l'unic canvi al Texto 1 es la substitucio del formigo feta a dalt. "motius" es
+      // manté calculat (per si es reaprofita en un altre lloc mes endavant) pero no
+      // s'aplica enlloc del text.
+      // FIX (2026-09-04): abans nomes s'aplicava DINS de "if (injOk)", pero un cas com
+      // demanar XC1 quan la base porta XC2 no injecta cap material nou a la descomposicio
+      // (no es un suplement de cost, nomes cal corregir la designacio) -- amb injOk fals
+      // aquest resum/text mai s'aplicava i es quedava el XC2 per defecte de la base. Ara
+      // s'aplica sempre que "Detecta suplements formigo" hagi donat un resum_nou/text_nou
+      // per aquesta partida, independentment de si tambe cal injectar-hi res.
+      if (supl && supl.resum_nou) resum = supl.resum_nou;
+      if (supl && supl.text_nou) text = supl.text_nou;
+
       if (injOk) {
         // Cada injeccio es FUSIONA amb una linia ja existent del mateix codi (p.ex.
         // l'acer "0.0" que moltes partides ja porten a rendiment 0) en lloc de duplicar-
@@ -308,16 +325,6 @@ for (const r of files) {
           sumFills += (Number(rendiment) || 0) * (Number(src.preu) || 0);
         }
         preu = Math.round(sumFills * (1 + ggRate) * 100) / 100;
-        // Fase 2 (2026-09-02): en lloc d'afegir "+ SUPLEMENTO HORMIGON" al titol, s'edita
-        // directament la designacio del formigo dins del propi resum (p.ex. XC1 -> XC4).
-        if (supl && supl.resum_nou) resum = supl.resum_nou;
-        // Fase 3 (2026-09-02): la mateixa substitucio tambe al text contractual (~T, la
-        // "descripcio de l'element" que es veu a Presto), no nomes al titol.
-        // Fase 4 (2026-09-02): NO s'hi afegeix cap "Incluye suplemento..." -- de moment
-        // l'unic canvi al Texto 1 es la substitucio del formigo feta a dalt. "motius" es
-        // manté calculat (per si es reaprofita en un altre lloc mes endavant) pero no
-        // s'aplica enlloc del text.
-        if (supl && supl.text_nou) text = supl.text_nou;
         // FIX (2026-09-03): si el text de la partida JA porta una linia de mallazo pròpia
         // (p.ex. "...mallazo 15x15Ø5mm."), es SUBSTITUEIXEN nomes els numeros per les mides
         // reals -- abans sempre s'afegia una linia nova a sobre, deixant les dues mides al

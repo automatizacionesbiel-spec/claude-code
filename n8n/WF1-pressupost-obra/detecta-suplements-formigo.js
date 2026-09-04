@@ -49,11 +49,6 @@ const EXP_GRUP = {
   XF1: 'XF1', XD3: 'XD3', XS1: 'XS1', XS2: 'XS2-3', XS3: 'XS2-3'
 };
 const EXP_CODI = { 'XC3-4': 'MA00.2.6.', 'XA1-2-3': 'MA00.2.666', XF1: 'MA00.2.8', XD3: 'MA00.2.9', XS1: 'MA00.2.9.', 'XS2-3': 'MA00.2.9.9' };
-// FIX (2026-09-03): ordre fix de sortida dels suplements (abans depenia de l'ordre en que
-// el client escrivia les classes d'exposicio al text, i el propi Genera BC3 les invertia
-// en inserir-les a la descomposicio). L'usuari vol sempre: grau -> XC3-4 -> XD3 -> XF1 ->
-// XS1 -> XS2-3 -> XA1-2-3 -> additius (hidrofug sempre el darrer).
-const EXP_ORDER = ['XC3-4', 'XD3', 'XF1', 'XS1', 'XS2-3', 'XA1-2-3'];
 
 function suplementsAplicables(client, base) {
   const out = [];
@@ -68,13 +63,12 @@ function suplementsAplicables(client, base) {
   }
   const expBase = new Set([...base.exp].map((e) => EXP_GRUP[e]).filter(Boolean));
   const expClient = new Set([...client.exp].map((e) => EXP_GRUP[e]).filter(Boolean));
-  for (const g of EXP_ORDER) if (expClient.has(g) && !expBase.has(g)) out.push([EXP_CODI[g], "classe d'exposicio " + g + ' (no la porta la base)']);
+  for (const g of expClient) if (!expBase.has(g)) out.push([EXP_CODI[g], "classe d'exposicio " + g + ' (no la porta la base)']);
   if (client.autocompactable && !base.autocompactable) out.push(['MA00.3.21', 'formigo autocompactable']);
+  if (client.hidrofug && !base.hidrofug) out.push(['MA00.2.3.', 'formigo hidrofug']);
   if (client.blanco && !base.blanco) out.push(['MA00.2.9.8', 'formigo blanc']);
   if (client.sr && !base.sr) out.push(['MA00.2.99', 'formigo SR']);
   if (client.mr && !base.mr) out.push(['MA00.2.999', 'formigo MR']);
-  // Hidrofug sempre el darrer (demanat explicitament per l'usuari).
-  if (client.hidrofug && !base.hidrofug) out.push(['MA00.2.3.', 'formigo hidrofug']);
   return out;
 }
 
@@ -86,18 +80,6 @@ function suplementsAplicables(client, base) {
 // de propietats (hidrofug, autocompactable...) que no formen part d'aquest patro.
 function actualitzaResum(resumOriginal, client, base, suplCodis) {
   let text = String(resumOriginal || '');
-  // FIX (2026-09-03): els additius (hidrofug/MR/SR/blanc/autocompactable) han d'anar
-  // ENGANXATS a la designacio amb un "+" (p.ex. ".../XS1+HIDROFUGO"), mai com una
-  // paraula solta al final de tot el text -- abans quedaven despres de "EN CIMENTACIONES"
-  // al resum, i despres del "NO INCLUYE" al text contractual, com si no fossin part del
-  // formigo. L'ordre de les etiquetes es el mateix que a suplementsAplicables (hidrofug
-  // sempre la darrera).
-  const tags = [];
-  if (suplCodis.includes('MA00.3.21')) tags.push('AUTOCOMPACTABLE');
-  if (suplCodis.includes('MA00.2.9.8')) tags.push('BLANCO');
-  if (suplCodis.includes('MA00.2.99')) tags.push('SR');
-  if (suplCodis.includes('MA00.2.999')) tags.push('MR');
-  if (suplCodis.includes('MA00.2.3.')) tags.push('HIDROFUGO');
   const m = text.match(/HA\s*-?\s*(\d{2})\s*\/\s*([BFL])\s*\/\s*(\d{1,2})\s*\/\s*(X[ACDFS]\d(?:\s*[+,]\s*X[ACDFS]\d)*)/i);
   if (m) {
     const haNou = (client.ha && client.ha > base.ha) ? client.ha : m[1];
@@ -109,15 +91,25 @@ function actualitzaResum(resumOriginal, client, base, suplCodis) {
       const expClient = new Set([...client.exp].map((e) => EXP_GRUP[e]).filter(Boolean));
       if ([...expClient].some((g) => !expBase.has(g))) expNou = [...client.exp].sort().join('+');
     }
-    let nova = 'HA-' + haNou + '/' + consNou + '/' + aridNou + '/' + expNou;
-    if (tags.length) nova += '+' + tags.join('+');
+    // FIX (2026-09-04): fins ara nomes es substituia la classe d'exposicio quan el client
+    // en demanava una MES exigent que la base (via EXP_GRUP, que nomes mapeja XC3/XC4 i
+    // amunt). Si el client demanava XC1 -- mes fluixa que el XC2 per defecte de la base --
+    // "expClient" sortia buit (XC1 no es a EXP_GRUP) i el titol es quedava amb el XC2 de la
+    // base tal qual. XC1 no necessita cap material addicional (no es un suplement de cost,
+    // nomes cal corregir la designacio), per aixo es un cas especial: activa el relabel
+    // encara que no hi hagi cap grup EXP_GRUP involucrat.
+    const xc1Canvia = client.exp.has('XC1') && !base.exp.has('XC1');
+    if (xc1Canvia) expNou = [...client.exp].sort().join('+');
+    const nova = 'HA-' + haNou + '/' + consNou + '/' + aridNou + '/' + expNou;
     text = text.slice(0, m.index) + nova + text.slice(m.index + m[0].length);
   }
-  // FIX (2026-09-03): si aquest tros de text (el titol, o el text contractual) no mostra
-  // enlloc la designacio del formigo (p.ex. partides com "FORMACIÓN VIGA DE CORONACIÓN
-  // 55X70CM NV." que no la porten al titol), NO s'hi afegeix l'etiqueta solta -- abans
-  // quedava penjada al final sense cap designacio al costat ("...NV. HIDROFUGO"), fora de
-  // context. Sense el patro "HA-XX/Y/ZZ/XCn" on enganxar-la, es deixa el text tal qual.
+  const tags = [];
+  if (suplCodis.includes('MA00.3.21')) tags.push('AUTOCOMPACTABLE');
+  if (suplCodis.includes('MA00.2.3.')) tags.push('HIDROFUGO');
+  if (suplCodis.includes('MA00.2.9.8')) tags.push('BLANCO');
+  if (suplCodis.includes('MA00.2.99')) tags.push('SR');
+  if (suplCodis.includes('MA00.2.999')) tags.push('MR');
+  if (tags.length) text = text + ' ' + tags.join(' ');
   return text;
 }
 
@@ -149,14 +141,20 @@ for (const r of files) {
   if (baseDesig.ha === null) continue;
 
   const supl = suplementsAplicables(clientDesig, baseDesig).filter(([sc]) => cat[sc] || con[sc]);
-  if (!supl.length) continue;
+  // FIX (2026-09-04): quan el client demana XC1 i la base porta una classe mes exigent
+  // (normalment XC2 per defecte), cal corregir el titol/Text1 encara que aixo NO impliqui
+  // cap suplement de cost (suplementsAplicables no hi afegeix res perque XC1 no es a
+  // EXP_GRUP -- vegeu actualitzaResum). Sense aquest cas especial, "if (!supl.length)
+  // continue" saltava directament la partida i el XC2 per defecte es quedava tal qual.
+  const xc1Relabel = clientDesig.exp.has('XC1') && !baseDesig.exp.has('XC1');
+  if (!supl.length && !xc1Relabel) continue;
 
   const suplCodis = supl.map((s) => s[0]);
   out.push({ json: {
     ordre: r.ordre,
     codi_base: r.codi_base,
     suplement_codis: suplCodis,
-    suplement_motiu: supl.map((s) => s[1]).join('; '),
+    suplement_motiu: supl.length ? supl.map((s) => s[1]).join('; ') : ("classe d'exposicio XC1 (la base porta " + [...baseDesig.exp].join('+') + ')'),
     suplement_rendiment: concreteLine.rendiment,
     suplement_gg_rate: ggRate,
     formigo_codi: concreteLine.codi,
