@@ -5,6 +5,29 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 10: recreated the missing `Detecta encofrat` node
+
+Requested after Change 9 flagged it: `genera-bc3.js` had been reading `$('Detecta encofrat')`
+for a client-specified formwork-quantity substitution since at least Change 5, but no node
+by that name existed live (only the unrelated `Detecta encofrat vertit`) — the `try/catch`
+around the call swallowed the "node not found" error, so the substitution was silent dead
+code with no error or warning.
+
+Recreated the node verbatim from this repo's `detecta-encofrat.js` (which had stayed
+committed as an orphaned file, unreferenced by any live node, since whenever it was
+originally dropped from the workflow): it extracts a real client-specified formwork
+quantity (`X m2/m3`, with an `encofrat`/`encofrado` keyword nearby) from the client's Excel
+text, keyed by `ordre`/`codi_base`, only emitting a row when a real quantity is found.
+`genera-bc3.js` already knew how to consume this (`encofratQtyClient`) to substitute the
+real number into the base's generic `"Q.estimada= X m2/m3"` placeholder instead of leaving
+the generic default — that logic just never received any input before now.
+
+Wired into the existing trigger chain as `Detecta acer` → `Detecta encofrat` → `Genera BC3`,
+with `alwaysOutputData: true` set from the start (the same protection Change 5 had to add
+retroactively to `Detecta encofrat vertit` after its missing setting silently broke the
+whole chain) so an empty-output run (no client row mentions a real quantity) doesn't stop
+`Genera BC3` from firing.
+
 ## Change 9: acer/mallat duplicate injection, and a workflow regression found in passing
 
 1. **Acer injected twice when the client already itemizes it separately.** Requested: if
@@ -37,16 +60,16 @@ version-controlled copy of what was changed and why.
    this repo's tracking. Worth keeping an eye on: if it recurs, the fix each time is to
    diff the live node against this repo's committed copy before assuming the repo is stale.
 
-3. **Also surfaced, not fixed**: `genera-bc3.js` reads a node called `Detecta encofrat`
-   for a client-specified formwork-quantity substitution (`encofratQtyClient`) — that
-   node does not exist in the live workflow (only the unrelated `Detecta encofrat vertit`
-   does, which fills in missing encofrado/vertido sub-items, not quantities). This repo
-   still has an orphaned `detecta-encofrat.js` file describing what that missing node
+3. **Also surfaced, not fixed here**: `genera-bc3.js` reads a node called `Detecta
+   encofrat` for a client-specified formwork-quantity substitution (`encofratQtyClient`)
+   — that node did not exist in the live workflow (only the unrelated `Detecta encofrat
+   vertit` did, which fills in missing encofrado/vertido sub-items, not quantities). This
+   repo still had an orphaned `detecta-encofrat.js` file describing what that missing node
    used to do — it was apparently dropped from the live workflow without the caller in
-   `genera-bc3.js` being updated, so that substitution has been silent dead code (the
+   `genera-bc3.js` being updated, so that substitution had been silent dead code (the
    `try/catch` around `$('Detecta encofrat').all()` swallows the "node not found" error)
-   since at least Change 5. Whether to re-add the node or remove the dead caller code is
-   a product decision for the user, not something to guess at.
+   since at least Change 5. Recreated in Change 10 below, once the user confirmed they
+   wanted the functionality back.
 
 ## Change 8: height-supplement phrasing, XC1 exposure downgrade, and phantom "Pendents" rows
 
