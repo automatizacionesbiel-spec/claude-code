@@ -5,6 +5,66 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 7: PDF total lines misread as new item codes (TCQ/ITEC format)
+
+Reported: a real PDF upload (execution 117, a Catalan "amidaments" report in TCQ/ITEC
+style) failed entirely with "no s'ha pogut llegir ni amb ajuda de la IA", even though
+the AI column-detection step correctly identified the file as a valid budget report
+(`confianca: "ALTA"`).
+
+`parsePdfGroup` — a function duplicated identically in both `intenta-parseig-
+determinista.js` (the first, fully deterministic attempt) and `parseja-amidaments.js`
+(the AI-assisted fallback) — parses PDF text line by line, and closes off the current
+item's quantity when it sees a line that is *only* a number (`reNumSol`). This report's
+format never writes a bare number for an item's total: it always writes `"Total m³
+......: 374,387"`. Two bugs compounded from that mismatch:
+
+1. That line doesn't match `reNumSol`, so it fell through to the generic "new item"
+   fallback regex, which greedily matched a trailing number in the line (e.g. the "387"
+   in "...374,387") as if it were a brand-new item code. This left the *real* item with
+   no total and no measurement lines at all — indistinguishable from a chapter/section
+   header — so it silently became a phantom "chapter" instead of a real line item.
+   Every item in the file was affected the same way, leaving **zero** real items
+   detected and the whole file rejected as unreadable.
+2. Separately, the line-deduplication filter (meant to strip repeated page
+   headers/footers) was also discarding *legitimate* total lines whenever they happened
+   to repeat identically — e.g. "Total U ......: 1,000" appears on 47 unrelated
+   single-unit items in this file, tripping the "seen 5+ times, treat as noise" rule.
+   This would have zeroed the quantity for those items even once bug 1 was fixed.
+
+### Fix
+
+Added a `reTotalLinia` pattern (`/^total\b[^:]*:\s*(-?[\d.,]+)\s*$/i`) that recognizes
+this "`Total <ud> ......: <num>`" shape and correctly closes the current item's total,
+and exempted it from the repeat-line dedup filter the same way `reNumSol` already was.
+Applied identically to both `intenta-parseig-determinista.js` and
+`parseja-amidaments.js`, keeping the shared function in sync as documented in both
+files' comments.
+
+Validated against the real extracted text of execution 117's PDF (3217 lines, 157
+distinct "Total ...:" lines): before the fix, 0 items were found; after, all 157 parse
+with correct, non-zero quantities matching every total line in the source, and the
+file now parses fully deterministically (without even needing the AI-assisted
+fallback this format previously required).
+
+### Known remaining limitation (not fixed here)
+
+While validating, a second, narrower issue surfaced: about 12 of the ~169 raw
+line-groups in this same document get corrupted when a wrapped PDF line happens to
+start with a number immediately followed by a short abbreviation that isn't a
+recognized measurement unit — e.g. a line break lands as `"230 V de tensió, ..."`
+(230 volts) or `"500 S, quantia ..."` (steel grade B500S), and the parser's generic
+"code + description" fallback mistakes the number for a new item code. This corrupts
+that one item (wrong code, wrong description, its real total attributed elsewhere)
+and, since the real item never received the total that would mark it as "not a
+chapter", it lingers as a phantom chapter heading that mislabels every subsequent
+item's `cap_desc` until the next real item is detected. This is a pre-existing
+heuristic limitation (not introduced by the fix above) affecting a small minority of
+items in this specific file; a robust general fix would need validation against a
+broader set of real PDFs (of varying layouts) to avoid regressing formats that
+already parse correctly today, which wasn't available here. Flagged to the user as a
+residual risk worth reviewing in the generated BC3 for this file.
+
 ## Change 6: sandbox-incompatible `zlib`, a blank line in Texto 1, and a bad AI sentinel value
 
 Three issues found from real executions after change 5 shipped:
