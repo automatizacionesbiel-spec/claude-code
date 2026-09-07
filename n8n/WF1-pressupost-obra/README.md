@@ -5,6 +5,120 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 17: dictionary becomes an AI hint, not a shortcut; auto-approve confirmed rows
+
+The user pushed back on Change 16's approach: rather than keep adding narrow
+"is this specific stale dictionary hit still valid" checks one failure mode
+at a time (Change 16 handled the composta/separat mismatch specifically),
+they asked for two structural fixes instead — proposed as options and
+picked by the user (see conversation): (1) make the dictionary a hint the
+AI weighs and can override, instead of a gate that skips AI matching
+entirely, and (3) stop asking a technician to review every single line
+when most of them are already reliable.
+
+### 1) Dictionary as a hint, not a shortcut
+
+**`resol-amb-regles.js`:** removed the diccionari-based skip entirely
+(Change 16's `teAmbdosEnUnaLinia`-gated exception is gone, superseded).
+The only clau that still skips AI matching is one explicitly learned as
+`EXCLOSA` — an explicit human decision that should never be re-litigated.
+Every other clau is now sent to AI matching exactly like a brand-new one,
+carrying its dictionary match (if any) as a new `suggerit_diccionari`
+field in the request payload. Added a new REGLES section instructing the
+AI to treat it as a strong prior — normally correct, saves it from
+reasoning from scratch — but to verify it against what *this* line's own
+text says (especially the composta/separat decision) and override it when
+it doesn't fit.
+
+**`consolida.js`:** this node independently re-derives the dictionary
+lookup and, before this change, always gave it priority over any AI
+answer — so leaving it as-is would have silently discarded the AI's fresh
+judgment for every clau. Rewrote its decision logic: `codi_base` now
+always comes from the AI's answer (when present), and the old dictionary
+value is compared against it purely to build an audit trail:
+- `origen: 'IA_NOU'` — no prior dictionary entry, first time this clau is seen.
+- `origen: 'IA_CONFIRMAT'`, `coincideix_diccionari: 'SI'` — the AI landed on the same code the dictionary already had.
+- `origen: 'IA_CANVIAT'`, `coincideix_diccionari: 'NO'` — the AI picked a *different* code; `motiu` records what the dictionary used to suggest.
+- `origen: 'DICCIONARI_SOSPITOS'` — the AI didn't answer for this clau (a failed lot, etc.); falls back to the old dictionary value so a `codi_base` is never left blank, but downgraded to `confianca: 'BAIXA'` for mandatory review.
+- `origen: 'EXCLOSA'` / `'FORA_ABAST'` / `'REGLA'` — unchanged hard paths (explicit exclusion, out-of-scope word filter, notes/no-match).
+
+This is the same principle Change 16 introduced for one specific mismatch,
+generalized: the dictionary can no longer silently override what a fresh,
+context-aware judgment says, for *any* reason, without needing to
+enumerate every way it could be stale in advance.
+
+**Known, accepted trade-off:** AI matching now runs for essentially every
+line of every obra, not just genuinely new ones — repeat clients with a
+well-established dictionary will see meaningfully more AI calls (and cost)
+per obra than before. The user chose this explicitly, weighing it against
+Change 16-style bugs recurring indefinitely otherwise.
+
+### 3) Auto-approve what the AI just reconfirmed
+
+**`prepara-full.js`** (not previously mirrored in this repo — added here):
+computes a new `revisio_necessaria` flag per row, using the audit trail
+above. A row is exempt from review only when *all* of: `confianca` is
+`ALTA`, `coincideix_diccionari` is `'SI'` (the AI independently reconfirmed
+the exact same code the dictionary already had), there is no
+`discrepancia` from `Enriquiment IA`, and no `flags` (e.g.
+`UNITAT_SOSPITOSA`). Rows meeting that bar come pre-marked `OK: 'x'` on the
+Google Sheet; everything else — a brand-new clau, one the AI corrected,
+anything below `ALTA` confidence, or one with a flagged discrepancy — is
+left blank for the technician to actually look at, with the new
+`revisio_necessaria` column making it trivial to filter/sort down to just
+those rows instead of reading top to bottom. Both columns stay fully
+editable; this only changes the default, and every row's `origen` and
+`coincideix_diccionari` are also exposed on the sheet for context.
+
+### Bug found while testing this (fixed, unrelated to 1/3 above)
+
+`consolida.js` had a pre-existing guard — `if (!codi_base && confianca
+!== 'NOTA_CLIENT' && confianca !== 'EXCLOSA') confianca = 'SENSE_MATCH';`
+— that reset `confianca` back to `SENSE_MATCH` for *any* row without a
+`codi_base`, including `FORA_ABAST` rows (which by design also have no
+`codi_base`). This silently hid the real "out of scope trade" reason
+behind a generic "no match" on every review sheet, for as long as this
+code has existed — found because Change 17's new tests exercise the
+`FORA_ABAST` path explicitly for the first time. Added `FORA_ABAST` to the
+exemption list alongside `NOTA_CLIENT`/`EXCLOSA`.
+
+### Not implemented this round (flagged to the user, not decided)
+
+While tracing `Prepara diccionari`'s connections to scope this change,
+found that `Espera revisio` (the wait-for-human-review step) is on the
+*only* input path into `Detecta suplements fixos` — the start of the
+chain that ends in `Genera BC3`. That means the review step currently
+blocks *delivery time* for every obra, even though `Detecta suplements
+fixos` and everything after it read from `Assigna capitols` directly
+(pre-review data) — a technician's corrections on the review sheet only
+ever reach the *dictionary* (for future obras' benefit), never this
+obra's own BC3. So today, waiting for review costs turnaround time on
+every obra without ever changing what that obra's BC3 contains. Making
+this genuinely non-blocking (matching what an existing code comment in
+`Prepara diccionari` already describes as the intended design) would be a
+bigger, separate change — it touches the trigger graph itself, not just
+matching logic — and hasn't been attempted; raised to the user rather than
+decided unilaterally.
+
+Also noticed, unrelated: `genera-bc3.js` and `assigna-capitols` (n8n node,
+not yet mirrored here) check `r.confianca === 'NOTA'`, but `consolida.js`
+sets `confianca = 'NOTA_CLIENT'` for client informational notes — these
+never match, so notes fall through to `PENDENTS DE CLASSIFICAR` instead of
+`VARIOS Y CONDICIONES GENERALES.` as apparently intended. Pre-existing,
+unrelated to Change 17, not fixed — flagged for a separate decision.
+
+### Validation
+
+Three-stage standalone test (`test_change17.js`, `eval`-loading all three
+files against a mocked `$`/`$input` in sequence, each stage's output
+feeding the next exactly as n8n would) covering: a brand-new clau, a clau
+the AI reconfirms, a clau the AI corrects away from a stale dictionary
+value, an `EXCLOSA` clau (never sent to AI), a clau where the simulated AI
+response is missing entirely (fallback path), a `FORA_ABAST` clau, and a
+standalone-encofrat clau paired with a composta code (`ABSORBIDA`). All
+three stages' outputs — including the exact `revisio_necessaria`/`OK`
+flags on the final review-sheet row — matched expectations before pushing.
+
 ## Change 16: stop trusting stale dictionary hits over the composta/separat context
 
 Follow-up to Change 15's "not yet addressed" item. The user pushed back

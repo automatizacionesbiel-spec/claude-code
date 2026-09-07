@@ -27,11 +27,7 @@ for (const c of cataleg) {
   if (e && f) compostes.add(String(c.codi));
 }
 const esEncofratClient = (t) => /encofr|desencofr/.test(norm(t));
-// FIX (2026-09-07): mateixa revalidacio que a "Resol amb regles" (llegiu el comentari d'alli
-// per al detall) -- si la propia linia del client menciona ENCOFRAT i FORMIGO alhora, el codi
-// apres del diccionari nomes es fiable si es una partida COMPOSTA; si no ho es, es un match
-// vell que no reflecteix el que demana aquesta linia i cal preferir la resposta de la IA (que
-// "Resol amb regles" ja ha tornat a demanar per a aquest cas).
+// Fa servir nomes per a l'ajust d'ABSORBIDA mes avall -- vegeu el comentari alli.
 const teAmbdosEnUnaLinia = (t) => { const n = norm(t); return /encofr|desencofr/.test(n) && /formig|hormig/.test(n); };
 
 // idMap i codis valids per clau, reconstruits a partir dels lots preparats
@@ -70,62 +66,64 @@ for (const resp of respostes) {
   }
 }
 
+// FIX (2026-09-07, Change 17): el diccionari ha deixat de ser una drecera que salta la IA --
+// "Resol amb regles" ara la crida sempre (excepte EXCLOSA) i li passa el match apres com a
+// pista. Aqui es compara la resposta de la IA amb aquell mateix diccionari nomes per generar un
+// rastre auditable ('origen', 'coincideix_diccionari'): si la IA CONFIRMA el que ja se sabia, si
+// ho CANVIA, o si es la primera vegada que es veu aquesta clau (NOU). Aquest senyal es la base
+// de l'autoaprovacio del full de revisio: nomes cal que el tecnic miri les files on la IA ha
+// discrepat del que ja hi havia, no totes (vegeu 'Prepara full').
 const out = [];
 for (const p of partides.slice().sort((a, b) => a.ordre - b.ordre)) {
   let codi_base = '';
   let confianca = '';
   let motiu = '';
   let origen = '';
+  let coincideix_diccionari = '';
 
   if (p.is_nota) {
     confianca = 'NOTA_CLIENT'; origen = 'REGLA';
     motiu = 'Text informatiu del client, no es una partida';
   } else if (diccMap[p.clau] === 'EXCLOSA') {
-    confianca = 'EXCLOSA'; origen = 'DICCIONARI';
-    motiu = "Fora d'abast (apres en obres anteriors)";
-  } else if (diccMap[p.clau]) {
-    const diccCodi = diccMap[p.clau];
-    // FIX (2026-09-07): no es confia cegament en el diccionari quan la linia narra
-    // encofrat+formigo junts pero el codi apres NO es una partida composta -- es exactament el
-    // patro que va fallar a 823.26 (llosa apuntant a nomes-encofrat, pilar/mur apuntant a
-    // nomes-formigo, en tots tres casos amb un match apres d'una obra anterior). En aquest cas
-    // es prefereix la resposta de la IA, que "Resol amb regles" ja ha tornat a demanar.
-    const dictSuspecte = teAmbdosEnUnaLinia(p.resum) && !compostes.has(diccCodi);
-    if (dictSuspecte && ia[p.clau]) {
-      const m = ia[p.clau];
-      codi_base = String(m.codi_base || '').trim();
-      confianca = m.confianca || 'SENSE_MATCH';
-      motiu = (m.motiu ? m.motiu + ' | ' : '') + 'revisat per IA: el diccionari donava ' + diccCodi + ' (no composta) per a una linia que narra encofrat i formigo junts';
-      origen = 'IA';
-    } else {
-      codi_base = diccCodi; confianca = 'DICCIONARI'; origen = 'DICCIONARI';
-      motiu = 'Match apres en obres anteriors';
-      if (dictSuspecte) {
-        // La IA no ha arribat a respondre per a aquesta clau (lot fallit, etc.): es manté el
-        // valor del diccionari perque sempre calgui un codi_base, pero es marca com a dubtós
-        // perquè el tècnic ho revisi -- mai es descarta silenciosament.
-        motiu += ' (SOSPITOS: sembla que hauria de ser una partida composta, revisar)';
-        confianca = 'BAIXA';
-      }
-    }
+    confianca = 'EXCLOSA'; origen = 'EXCLOSA';
+    motiu = "Fora d'abast (exclosa manualment en obres anteriors)";
   } else if (foraAbast[p.clau]) {
     confianca = 'FORA_ABAST'; origen = 'REGLA';
     motiu = "Ofici fora d'abast (paraula: " + foraAbast[p.clau] + "). No s'ha consultat la IA.";
-  } else if (ia[p.clau]) {
-    const m = ia[p.clau];
-    codi_base = String(m.codi_base || '').trim();
-    confianca = m.confianca || 'SENSE_MATCH';
-    motiu = m.motiu || '';
-    origen = 'IA';
   } else {
-    confianca = 'SENSE_MATCH'; origen = 'REGLA';
-    motiu = 'Sense resposta del matching';
+    const diccCodi = diccMap[p.clau]; // undefined si es la primera vegada que es veu la clau
+    if (ia[p.clau]) {
+      const m = ia[p.clau];
+      codi_base = String(m.codi_base || '').trim();
+      confianca = m.confianca || 'SENSE_MATCH';
+      motiu = m.motiu || '';
+      if (diccCodi === undefined) {
+        origen = 'IA_NOU';
+      } else if (diccCodi === codi_base) {
+        origen = 'IA_CONFIRMAT';
+        coincideix_diccionari = 'SI';
+      } else {
+        origen = 'IA_CANVIAT';
+        coincideix_diccionari = 'NO';
+        motiu = (motiu ? motiu + ' | ' : '') + 'el diccionari suggeria ' + diccCodi + ', la IA ha triat un codi diferent per a aquesta linia';
+      }
+    } else if (diccCodi !== undefined) {
+      // La IA no ha arribat a respondre per a aquesta clau (lot fallit, etc.): es manté el
+      // valor del diccionari perque sempre calgui un codi_base, pero mai amb la mateixa
+      // confianca que una resposta fresca -- es marca per a revisio manual.
+      codi_base = diccCodi; confianca = 'BAIXA'; origen = 'DICCIONARI_SOSPITOS';
+      motiu = 'Sense resposta de la IA: es manté el match après (' + diccCodi + '), cal revisar-ho';
+    } else {
+      confianca = 'SENSE_MATCH'; origen = 'REGLA';
+      motiu = 'Sense resposta del matching';
+    }
   }
 
   // A la base hi ha codis que acaben en punt (203., 208., 104.) al costat del codi sense
   // punt, que es una partida DIFERENT. La IA els escurca. Si el codi literal no es valid
   // pero si ho es amb el punt final, es recupera: nomes s'accepta si la variant existeix.
-  if (codi_base && origen === 'IA') {
+  const esOrigenIA = origen === 'IA_NOU' || origen === 'IA_CONFIRMAT' || origen === 'IA_CANVIAT';
+  if (codi_base && esOrigenIA) {
     const valids = validsPerClau[p.clau];
     const okCodi = (c) => (valids ? valids.has(c) : !!catMap[c]);
     if (!okCodi(codi_base)) {
@@ -144,7 +142,7 @@ for (const p of partides.slice().sort((a, b) => a.ordre - b.ordre)) {
     motiu = 'Codi proposat inexistent al cataleg (' + codi_base + ')';
     codi_base = ''; confianca = 'SENSE_MATCH';
   }
-  if (codi_base && origen === 'IA' && validsPerClau[p.clau] && !validsPerClau[p.clau].has(codi_base)) {
+  if (codi_base && esOrigenIA && validsPerClau[p.clau] && !validsPerClau[p.clau].has(codi_base)) {
     motiu = 'Codi proposat fora de la llista valida (' + codi_base + ')';
     codi_base = ''; confianca = 'SENSE_MATCH';
   }
@@ -160,7 +158,12 @@ for (const p of partides.slice().sort((a, b) => a.ordre - b.ordre)) {
       motiu += (motiu ? ' | ' : '') + 'UNITAT DIFERENT (' + p.ud + ' vs ' + c.ud + ')';
     }
   }
-  if (!codi_base && confianca !== 'NOTA_CLIENT' && confianca !== 'EXCLOSA') confianca = 'SENSE_MATCH';
+  // FIX (2026-09-07, Change 17): aquest guard reinicialitzava 'FORA_ABAST' a 'SENSE_MATCH'
+  // (no exemptat, a diferencia de NOTA_CLIENT/EXCLOSA), ja que una fila fora d'abast tampoc
+  // te codi_base -- descobert provant aquest canvi, pero es un bug preexistent independent:
+  // sempre havia amagat el motiu real ("ofici fora d'abast") darrere d'un generic "sense
+  // match" al full de revisio.
+  if (!codi_base && confianca !== 'NOTA_CLIENT' && confianca !== 'EXCLOSA' && confianca !== 'FORA_ABAST') confianca = 'SENSE_MATCH';
 
   const flags = (p.flags || []).slice();
   if (sospitosaPerClau[p.clau]) flags.push('UNITAT_SOSPITOSA');
@@ -196,6 +199,7 @@ for (const p of partides.slice().sort((a, b) => a.ordre - b.ordre)) {
     import: Math.round((Number(p.qty) || 0) * preu * 100) / 100,
     confianca,
     origen,
+    coincideix_diccionari,
     es_composta,
     motiu,
     flags: flags.join(', '),

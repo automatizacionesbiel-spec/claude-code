@@ -44,37 +44,35 @@ for (const p of partides) {
   if (encofratsClient.length < 40) encofratsClient.push({ capitol: p.cap_desc || '', ud: p.ud_norm, resum: String(p.resum).slice(0, 120) });
 }
 
-// --- CAPA 1: diccionari apres ---
+// --- CAPA 1: diccionari apres -- ARA ES UNA PISTA PER A LA IA, NO UNA DRECERA ---
 const dicc = $input.all().map((i) => i.json).filter((r) => r && r.clau);
 const diccMap = {};
 for (const r of dicc) diccMap[r.clau] = String(r.codi_base ?? '');
 
-// FIX (2026-09-07): el diccionari nomes guarda clau->codi_base, sense memoria de si en aquell
-// moment el client mesurava l'encofrat per separat o no -- una mateixa clau pot ser correctament
-// COMPOSTA en una obra i correctament SEPARADA en una altra. Sense revalidar-ho, un match apres
-// fa temps es quedava fixat per sempre encara que la propia redaccio d'AQUESTA linia digui
-// clarament el contrari: la IA mai arribava a intervenir-hi (obra 823.26: 8 linies de
-// llosa/pilar/mur que narren "amb muntatge/desmuntatge d'encofrat...formigo..." en una sola
-// frase -- exactament el patro que hauria de triar una partida [COMPOSTA] -- es quedaven amb un
-// codi simple apres d'una obra anterior). Si la propia linia del client menciona ENCOFRAT i
-// FORMIGO alhora pero el codi apres NO es composta, es tracta com "sense resoldre" i es torna a
-// enviar a la IA -- exactament igual que qualsevol partida nova. Vegeu el mateix criteri a
-// 'Consolida' (que es qui decideix el resultat final: cal que ambdos nodes hi estiguin d'acord,
-// sino 'Consolida' tornaria a imposar el valor vell del diccionari per sobre de la resposta nova
-// de la IA).
-const teAmbdosEnUnaLinia = (t) => { const n = norm(t); return /encofr|desencofr/.test(n) && /formig|hormig/.test(n); };
-
-// --- Partides pendents, deduplicades per clau ---
+// FIX (2026-09-07, Change 17): abans, si una clau ja tenia entrada al diccionari, es saltava
+// la IA per complet -- amb una excepcio afegida al Change 16 nomes per al cas concret de
+// mismatch composta/separat. Aquest disseny obligava a anar afegint una comprovacio nova cada
+// vegada que es trobava una altra manera que un match vell podia quedar desfasat (el diccionari
+// no te memoria del context que el va fer correcte en aquella obra concreta). En comptes de
+// seguir ampliant la llista de comprovacions especifiques, la IA ara es crida SEMPRE (l'unica
+// excepcio es EXCLOSA, una decisio explicita ja presa per una persona que mai s'ha de tornar a
+// preguntar). El diccionari es passa dins el propi missatge com a 'suggerit_diccionari': la IA
+// el fa servir com a punt de partida fort (normalment estalvia haver de raonar-ho de zero) pero
+// sempre el contrasta amb el que demana AQUESTA linia -- vegeu la nova seccio a REGLES, mes
+// avall. 'Consolida' es qui compara la resposta de la IA amb aquest mateix diccionari per saber
+// si la confirma o la corregeix, i aquesta comparacio es la base de l'autoaprovacio al full de
+// revisio (menys feina manual: nomes cal repassar les files on la IA ha discrepat del que ja se
+// sabia, no totes).
 const pendents = new Map();
 for (const p of partides) {
   if (p.is_nota) continue;
-  const diccCodi = diccMap[p.clau];
-  if (diccCodi !== undefined) {
-    const dictSuspecte = diccCodi && diccCodi !== 'EXCLOSA' && teAmbdosEnUnaLinia(p.resum) && !compostes.has(diccCodi);
-    if (!dictSuspecte) continue;
-  }
+  if (diccMap[p.clau] === 'EXCLOSA') continue;
   if (!pendents.has(p.clau)) {
-    pendents.set(p.clau, { clau: p.clau, ud: p.ud_norm, resum: p.resum, text: String(p.text || '').slice(0, 250), capitol: p.cap_desc || '', encofrat: esEncofratClient(p.resum) });
+    pendents.set(p.clau, {
+      clau: p.clau, ud: p.ud_norm, resum: p.resum, text: String(p.text || '').slice(0, 250),
+      capitol: p.cap_desc || '', encofrat: esEncofratClient(p.resum),
+      dicc_suggerit: diccMap[p.clau] || null
+    });
   }
 }
 
@@ -138,6 +136,12 @@ const REGLES = [
   "- Si en aquell element el client ja dona una linia d'encofrat a part, NO triis una [COMPOSTA]: triaries dues vegades el mateix encofrat. Tria la partida d'operacio solta (nomes el formigo, o nomes l'encofrat, segons la linia que estiguis emparellant).",
   "- Si el client nomes dona l'element sencer i no mesura cap encofrat per a aquell element, tria la [COMPOSTA].",
   "- Una linia d'encofrat del client sempre ha d'anar a una partida d'encofrat, mai a una composta.",
+  '',
+  "SUGGERIMENT DEL DICCIONARI (camp 'suggerit_diccionari' de cada partida):",
+  "- Quan no es null, es el codi que es va triar per a aquesta MATEIXA clau tecnica (element, formigo, unitat...) en una obra anterior.",
+  '- Es un indici fort -- normalment es correcte i estalvia haver-hi de pensar de zero -- pero NOMES si tambe encaixa amb el que demana AQUESTA linia concreta. Fixa-t\'hi sobretot en la decisio de COMPOSTA/SEPARAT d\'aqui dalt: un mateix element es pot mesurar de maneres diferents segons l\'obra (en una el client separa l\'encofrat, en una altra no), i el suggeriment nomes es fiable per al patro amb que es va aprendre.',
+  "- Si el suggeriment no encaixa amb el que diu aquesta linia (unitat, si dona l'encofrat per separat, parametres geometrics...), ignora'l i tria la candidata que si hi encaixi.",
+  "- Si es null, es la primera vegada que es veu aquesta clau: decideix nomes amb el text de la linia.",
   '',
   'CRITERIS DE CONFIANCA:',
   '- ALTA: element, parametres geometrics (gruix, alcada, cares, acabat) i tipus de treball coincideixen clarament.',
@@ -218,7 +222,7 @@ for (const grup of Object.keys(aResoldre).sort()) {
           '. Nomes pots triar d\'aquesta llista - format: codi | unitat | resum\n' + candStr,
         messages: [{ role: 'user', content:
           'PARTIDES DEL CLIENT. Respon un match per a cada id:\n' +
-          JSON.stringify(mapa.map((m, ix) => ({ id: m.id, capitol_client: lot[ix].capitol, ud: lot[ix].ud, es_linia_encofrat: lot[ix].encofrat, resum: lot[ix].resum, text: lot[ix].text }))) +
+          JSON.stringify(mapa.map((m, ix) => ({ id: m.id, capitol_client: lot[ix].capitol, ud: lot[ix].ud, es_linia_encofrat: lot[ix].encofrat, resum: lot[ix].resum, text: lot[ix].text, suggerit_diccionari: lot[ix].dicc_suggerit }))) +
           blocEncofrats }],
         output_config: { format: { type: 'json_schema', schema: SCHEMA } }
       }
@@ -232,7 +236,7 @@ if (!out.length) {
     tipus: 'cap_lot',
     fora_abast: foraAbast,
     total_partides: partides.length,
-    resoltes_diccionari: partides.filter((p) => !p.is_nota && diccMap[p.clau] !== undefined).length,
+    exclosa_diccionari: partides.filter((p) => !p.is_nota && diccMap[p.clau] === 'EXCLOSA').length,
     notes: partides.filter((p) => p.is_nota).length,
     unitat_sospitosa: sospitoses.length
   } }];
