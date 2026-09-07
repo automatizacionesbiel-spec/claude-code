@@ -5,6 +5,81 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 14: fixed the root cause of a bad learned dictionary match
+
+Prompted by the user asking whether the `diccionari_matches` data table (which
+`Resol amb regles` queries to skip AI matching for previously-seen client
+wording) might hold entries wrongly learned from earlier bugs, and if so to
+delete them.
+
+**Checked first: none of Changes 11-13 could have written a bad `codi_base`
+match.** `Desa diccionari` only stores `clau -> codi_base`, produced by the
+matching stage (`Resol amb regles`/`Matching Claude`/`Classifica capitols`),
+which runs entirely before any of the decomposition-time nodes touched in
+those changes (acer/mallat/gruix/alçada injection, XC-relabel, Genera BC3).
+
+**Found the real mechanism while investigating:** `Prepara diccionari` has
+two paths — `Aplica enriquiment` feeds it directly and learns every match
+*immediately*, with no human review; `Llegeix full revisat` feeds it a
+second time and *overwrites* (upsert on base+clau) with the technician's
+correction, if and when the review sheet actually gets filled in. So a wrong
+match from any historical bug — not necessarily one from this session — can
+sit in the dictionary indefinitely if nobody ever corrected it.
+
+**Audited the table** (218 rows, sampled via the `Llegeix diccionari` node's
+output from execution #124 for the 822.26 obra, since there is no row-level
+read/list tool for n8n data tables on this MCP surface) by cross-checking
+each client `clau` against its assigned `codi_base`'s own catalog family.
+Found and traced the one concrete bad entry (the beam-inside-wall report from
+Change 11 point 5) to its exact root cause:
+
+`E:MUR|HA30|C:B|A:20|X:XC1|M3` was upserted into the dictionary from a
+genuine wall item at some earlier obra. A beam item in 822.26 ("Formigó per a
+bigues, HA-30/B/20/XC1...") computed the **identical** key and collided with
+it, inheriting the wall's code (408). Root cause, in `parseja-amidaments.js`'s
+`empremtaTecnica()` (the function that builds this structured key so two
+different wordings of the same element share one dictionary entry):
+
+1. **Missing Catalan plural forms.** Auditing all ten element keywords against
+   their singular/plural, Catalan/Spanish forms found 7 of 10 only matched the
+   Catalan *singular* (`llosa` but not `lloses`, `solera` not `soleres`,
+   `sabata` not `sabates`, `escala` not `escales`, `pantalla` not `pantalles`,
+   `jassera` not `jasseres`) or missed the Spanish plural (`muro` but not
+   `muros`, `forjado` but not `forjados`) — despite plural being the more
+   common phrasing in real amidaments. `VIGA` didn't recognise the Catalan
+   word for beam at all (`biga`/`bigues`), only Spanish `viga`/`jácena`. When
+   an element isn't recognised, the key falls back to the whole normalized
+   text — defeating the fingerprint's purpose (two wordings of the same
+   element no longer share a key) — or, worse:
+2. **False-positive collision.** With `VIGA` not recognised, the beam item's
+   *own* text ("...es formigonarà d'un sol cop tota l'alçada del **mur**...")
+   contains "mur" later on, in generic filler boilerplate — not because it's
+   about a wall. The old code searched the element keyword against the whole
+   text with no positional preference, so this false match won and produced
+   the wall's key.
+
+Fixed both: every element keyword now covers singular+plural in both
+languages, and detection now checks only the first clause (up to the first
+comma — where the client reliably states the element: "Formigó per a
+bigues,", "Hormigonado de muros de contención,") before ever falling back to
+the full text.
+
+Verified against a battery of real texts from this obra plus synthetic
+plural/false-positive-collision cases (12 scenarios, including the exact bug
+reproduction) — all pass. Pushed and diffed byte-for-byte against the live
+node.
+
+**Does not retroactively fix bad entries already in the table.** This
+prevents new collisions of this kind; the known-bad `E:MUR|HA30|...` entry
+(and any other pre-existing bad entries this audit didn't catch, since only
+822.26's 218-row slice was sampled) still needs correcting from the n8n UI —
+the MCP data-table surface exposes insert and column operations only, no
+row-level read, update, or delete, so this could not be done from here.
+**The user was advised against wiping the whole table**: it holds many
+correct, valuable matches built up over time, and clearing it would force
+every future obra back through slower/costlier AI matching for items already
+known-good.
+
 ## Change 13: extended Change 12's fix to the height-supplement node
 
 `detecta-suplements-alcada.js` turned out to carry the exact same two bugs

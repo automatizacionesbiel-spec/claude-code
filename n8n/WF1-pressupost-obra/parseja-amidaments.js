@@ -305,22 +305,42 @@ const normText = (s) => norm(s).replace(/\s+/g, ' ');
 // element generin la MATEIXA clau al diccionari. Nomes fets, mai "semblanca" de text --
 // si no hi ha prou fets clars, cau al text normalitzat sencer (com abans) per no arriscar-se
 // a ajuntar sota una mateixa clau dos elements que en realitat son diferents.
+// FIX (2026-09-07): dos bugs reals trobats auditant el diccionari apres (822.26):
+// 1) Nomes es reconeixia la forma SINGULAR catalana de gairebe tots els elements --
+//    "lloses"/"soleres"/"sabates"/"escales"/"pantalles"/"jasseres" (plural, -a -> -es) i
+//    "muros"/"forjados" (castella plural) no feien match amb cap paraula clau, tot i ser la
+//    forma mes habitual als amidaments reals (es mesuren diverses lloses/sabates a la
+//    vegada). Quan l'element no es reconeixia, la clau keia al text normalitzat sencer --
+//    perdent el sentit de la "empremta tecnica" (dues redaccions diferents ja no compartien
+//    clau). "VIGA" tampoc reconeixia gens la paraula catalana "biga"/"bigues" (nomes
+//    "viga"/"jacena"/"jassera", totes en castella o nomes singular).
+// 2) Amb l'element no trobat (per (1)) en una partida de BIGUES, la cerca acabava trobant
+//    per pura casualitat la paraula "mur" mes endavant al mateix paragraf (frase de
+//    farciment: "...es formigonara...tota l'alcada del mur..."), generant la MATEIXA clau
+//    que un mur real ("E:MUR|HA30|C:B|A:20|X:XC1") -- i el diccionari li assignava el codi
+//    del mur. Ara la cerca es fa PRIMER nomes a la primera clausula del text (fins a la
+//    primera coma, on el client sempre declara l'element: "Formigo per a bigues,",
+//    "Hormigonado de muros de contencion,"...) i nomes si alla no hi ha res es cau a cercar
+//    al text sencer -- aixi una paraula d'un altre element mes endavant al paragraf ja no
+//    pot guanyar per davant de l'element real declarat al principi.
 const ELEMENTS_TIPUS = [
-  ['PANTALLA', /\bpantalla/],
-  ['MUR', /\bmur[os]?\b/],
+  ['PANTALLA', /\bpantall(?:a|es|as)\b/],
+  ['MUR', /\bmurs?\b|\bmuros?\b/],
   ['PILAR', /\bpilars?\b|\bpilarets?\b/],
-  ['LLOSA', /\bllosa|\blosa/],
-  ['FORJAT', /\bforjat|\bforjado/],
-  ['VIGA', /\bviga|\bjacena|\bjacena|\bjassera/],
-  ['ESCALA', /\bescala|\bescalera/],
-  ['SOLERA', /\bsolera/],
-  ['SABATA', /\bsabata|\bzapata/],
-  ['FOSO', /\bfoso\b/],
+  ['LLOSA', /\bllos(?:a|es|as)\b|\blos(?:a|as)\b/],
+  ['FORJAT', /\bforjats?\b|\bforjados?\b/],
+  ['VIGA', /\bvigas?\b|\bjacenas?\b|\bjasser(?:a|es|as)\b|\bbig(?:a|ues|es)\b/],
+  ['ESCALA', /\bescal(?:a|es|as)\b|\bescaleras?\b/],
+  ['SOLERA', /\bsoler(?:a|es|as)\b/],
+  ['SABATA', /\bsabat(?:a|es|as)\b|\bzapatas?\b/],
+  ['FOSO', /\bfosos?\b/],
 ];
 const empremtaTecnica = (text) => {
   const t = norm(text);
+  const primeraClausula = t.slice(0, t.indexOf(',') !== -1 ? t.indexOf(',') : Math.min(t.length, 80));
   let element = '';
-  for (const [nom, re] of ELEMENTS_TIPUS) { if (re.test(t)) { element = nom; break; } }
+  for (const [nom, re] of ELEMENTS_TIPUS) { if (re.test(primeraClausula)) { element = nom; break; } }
+  if (!element) for (const [nom, re] of ELEMENTS_TIPUS) { if (re.test(t)) { element = nom; break; } }
   if (!element) return null;
   const m = t.match(/ha-?(\d{2})\s*\/\s*([bfl])\s*\/\s*(\d{1,2})\s*\/\s*(x[a-z]\d(?:\s*\+\s*x[a-z]\d)*)/);
   let ha = '', cons = '', arid = '', exp = '';
