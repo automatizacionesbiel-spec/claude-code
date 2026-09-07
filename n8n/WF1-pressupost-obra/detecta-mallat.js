@@ -5,7 +5,12 @@ const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').rep
 const BS = String.fromCharCode(92);
 const tripletsOf = (s) => { const t = String(s || '').split(BS); const o = []; for (let i = 0; i < t.length - 1; i += 3) { const c = (t[i] || '').trim(); if (c) o.push([c, t[i + 1], t[i + 2]]); } return o; };
 
-const files = $('Assigna capitols').all().map((i) => i.json);
+// FIX (2026-09-07): es llegia de "Assigna capitols", que va ABANS de l'enriquiment amb
+// IA -- per aixo els camps que la IA extreu (r.mallat_ia, r.gruix_cm_ia...) sempre eren
+// undefined aqui i la logica "primer la IA, el regex nomes com a reserva" era codi mort.
+// "Aplica enriquiment" retorna les mateixes files en el mateix ordre, amb els camps de la
+// IA afegits, i ja s'ha executat molt abans que aquest node.
+const files = $('Aplica enriquiment').all().map((i) => i.json);
 const cataleg = $('Llegeix cataleg').all().map((i) => i.json).filter((r) => r && r.codi);
 const conceptes = $('Llegeix conceptes').all().map((i) => i.json).filter((r) => r && r.codi);
 const cat = {};

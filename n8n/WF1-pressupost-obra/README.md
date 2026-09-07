@@ -5,6 +5,57 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 12: connected the AI-enrichment layer to the nodes meant to use it
+
+Prompted by the question "wouldn't AI handle these varying Excels better than
+regex?" — the honest answer turned out to be that a substantial AI layer
+already existed (added 2026-09-04, see Change 11's intro) and was already
+extracting exactly this kind of thing (steel kg, mesh size, thickness, a short
+disambiguation label) from free-form client text — but it was wired to the
+wrong place, so `detecta-acer.js` / `detecta-mallat.js` / `detecta-espessor.js`
+never actually saw its output.
+
+**Root cause.** All three read `$('Assigna capitols')`, the node that runs
+*before* AI enrichment. `r.acer_kg_ia`, `r.mallat_ia`, `r.gruix_cm_ia` and
+`r.etiqueta_curta` are added later, by `Aplica enriquiment`. So every "prefer
+the AI value, fall back to regex" comment in those three files was describing
+dead code — the AI branch could never be taken, the fallback ran 100% of the
+time. This is the real reason the Change 11 acer fix still needed a
+keyword-matching fallback at all: the fix was correct, but the actually-working
+AI classification sitting right there in the workflow was invisible to it.
+
+**Fix, part 1 — rewire.** All three now read `$('Aplica enriquiment')` instead
+(same rows, same order, with the AI fields present). One-line change per file.
+
+**Fix, part 2 — give the AI the family question directly**, rather than
+inferring family from free text at all. `prepara-enriquiment.js` gained a
+fourth extraction task: for every standalone steel row, return its structural
+family as one of a closed list (`PILAR`/`MURO`/`FORJADO`/`VIGA`/`CIMENTACION`/
+`OTROS`). `Aplica enriquiment` validates the answer against that same list
+(an unrecognized value, including `OTROS`, is dropped) and attaches it as
+`r.familia_ia`. `detecta-acer.js` uses it as the primary signal, falling back
+to the Change 11 keyword table only when a run never reached the AI. The
+payload sent to the model also gained `capitol` — the client's own
+chapter/subchapter ("Subcapítol Sostres i lloses") — which was available on
+every row all along but was never actually sent; it's a far more reliable
+signal than parsing a paragraph of free text, and lets the same mechanism
+correctly cover Catalan chapter names the keyword table doesn't.
+
+Verified against the real payload of execution #124 (obra 822.26): the AI's
+own `etiquetes` output for that run already read `MUROS DE CONTENCIÓN`, `LOSAS`,
+`VIGAS`, `PILARES`, `RASAS, POZOS Y ENCEPADOS` for the exact rows in question —
+simulating `familia_ia` from that data correctly deduplicates all five
+families, matching against the real base's chapters (408/310/70003/101/604).
+
+**What this does and doesn't fix.** This connects the *existing* AI layer to
+where it was always meant to feed — it is not a new capability, and it does
+not remove the deterministic regex/keyword paths anywhere: every "Detecta ..."
+node keeps its own extraction as a fallback for whichever rows the AI didn't
+classify (or executions where enrichment didn't run at all — the `Cal enriquir`
+gate can skip it), so behavior only improves, never regresses, relative to
+Change 11. See the reply in this session for the fuller answer on which AI
+layers already exist and where a genuinely new one would help.
+
 ## Change 11: five defects found in obra 822.26 (Hospital Sant Camil)
 
 Reported against the BC3 of execution #124, cross-checked against the client's

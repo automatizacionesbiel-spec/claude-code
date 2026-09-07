@@ -16,6 +16,8 @@ const etiquetes = {};
 const acerIa = {};
 const mallatIa = {};
 const gruixIa = {};
+const familiaIa = {};
+const FAMILIES_VALIDES = new Set(['PILAR', 'MURO', 'FORJADO', 'VIGA', 'CIMENTACION']);
 let respostes = [];
 try { respostes = $('Enriquiment IA').all().map((i) => i.json); } catch (e) {}
 for (const resp of respostes) {
@@ -46,6 +48,15 @@ for (const resp of respostes) {
     const cm = Number(v.cm);
     if (cm > 0) gruixIa[Number(v.ordre)] = cm;
   }
+  // FIX (2026-09-07): familia estructural de les partides d'acer independents. Es valida
+  // contra la llista tancada (les mateixes etiquetes que fa servir "Detecta acer"): si la
+  // IA retorna qualsevol altra cosa, o "OTROS", es descarta i el node cau al seu metode de
+  // sempre. Aixi la IA nomes pot AFEGIR informacio, mai empitjorar el que ja funcionava.
+  for (const v of (p.families || [])) {
+    if (v.ordre === undefined || v.ordre === null) continue;
+    const f = String(v.familia || '').trim().toUpperCase();
+    if (FAMILIES_VALIDES.has(f)) familiaIa[Number(v.ordre)] = f;
+  }
 }
 
 return files.map((r0) => {
@@ -55,6 +66,7 @@ return files.map((r0) => {
   if (acerIa[Number(r.ordre)] !== undefined) r.acer_kg_ia = acerIa[Number(r.ordre)];
   if (mallatIa[Number(r.ordre)] !== undefined) r.mallat_ia = mallatIa[Number(r.ordre)];
   if (gruixIa[Number(r.ordre)] !== undefined) r.gruix_cm_ia = gruixIa[Number(r.ordre)];
+  if (familiaIa[Number(r.ordre)] !== undefined) r.familia_ia = familiaIa[Number(r.ordre)];
   return { json: r };
 });
 

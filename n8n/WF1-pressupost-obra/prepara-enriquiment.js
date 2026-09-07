@@ -24,7 +24,12 @@ for (const r of files) {
   const titol = String(r.resum_excel || '').trim();
   const detall = String(r.text || '').trim().slice(0, 1500);
   if (!titol && !detall) continue;
-  perCodi.get(k).files.push({ ordre: r.ordre, titol, detall });
+  // FIX (2026-09-07): s'hi afegeix el capitol/subcapitol del client. Es la pista mes
+  // fiable de tot per saber a quin element estructural pertany una fila ("Subcapitol Murs",
+  // "Subcapitol Jasseres", "Subcapitol Sostres i lloses") i fins ara la IA no el veia: nomes
+  // rebia el titol i la descripcio de la propia fila.
+  const capitol = String(r.capitol_client || '').trim();
+  perCodi.get(k).files.push({ ordre: r.ordre, capitol, titol, detall });
 }
 const items = [...perCodi.values()]
   .map((v) => ({ codi: v.codi, resum_base: v.resum_base, files: v.files.slice(0, 15) }))
@@ -79,9 +84,22 @@ const SCHEMA = {
         required: ['ordre', 'cm'],
         additionalProperties: false
       }
+    },
+    // FIX (2026-09-07): familia estructural de les partides d'ACER independents. Es un
+    // "string" i no un enum a proposit: els valors permesos van al prompt i es validen a
+    // "Aplica enriquiment" contra la llista tancada, aixi un valor inesperat es descarta en
+    // lloc de fer petar la crida sencera amb un 400 d'esquema.
+    families: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { ordre: { type: 'integer' }, familia: { type: 'string' } },
+        required: ['ordre', 'familia'],
+        additionalProperties: false
+      }
     }
   },
-  required: ['avisos', 'etiquetes', 'acer', 'mallat', 'gruix'],
+  required: ['avisos', 'etiquetes', 'acer', 'mallat', 'gruix', 'families'],
   additionalProperties: false
 };
 
@@ -89,7 +107,7 @@ const REGLES = [
   "Ets el tecnic de pressupostos d'Encofrados Castell.",
   "Reps partides del cataleg de l'empresa (codi + resum_base) i, per a cadascuna, la llista de files del client (amb el seu 'ordre') que hi han anat a parar -- inclou titol curt i, quan hi es, la descripcio tecnica llarga.",
   '',
-  'TENS TRES TASQUES INDEPENDENTS:',
+  'TENS QUATRE TASQUES INDEPENDENTS:',
   '',
   "1) AVISOS (com sempre): avisa quan el client demana alguna cosa que la partida NO cobreix i que necessita un SUPLEMENT o un canvi que fara el tecnic a ma.",
   '',
@@ -127,7 +145,20 @@ const REGLES = [
   '- GRUIX (cm): NOMES si el client indica explicitament un gruix/espessor/grosor/canto en centimetres per a l’element (llosa, forjat, solera, capa de neteja) que sigui una dada real d’aquest projecte -- si nomes repeteix el mateix gruix que ja porta el titol de la partida no cal reportar-lo (no fa cap mal si ho fas, pero no es necessari).',
   '- Inclou NOMES els "ordre" on hi hagi una xifra clara d’aquell tipus concret. Si no hi ha cap valor d’un tipus per cap fila, deixa aquell array buit.',
   '',
-  'El camp "discrepancia" (tasca 1), escriu-lo en catala. El camp "etiqueta" (tasca 2), en castella i majuscules, com s’ha indicat. Els valors de la tasca 3 (acer/mallat/gruix) son sempre numeros.'
+  "4) FAMILIA ESTRUCTURAL de les partides d'ACER independents:",
+  "- Mira NOMES les files que son una partida d'acer/armadura per si mateixa (el seu objecte es subministrar i muntar acer corrugat, malla o armadura), no les de formigo, encofrat o altres unitats.",
+  "- Per a cadascuna, digues a quin element estructural correspon aquell acer, fent servir EXACTAMENT una d'aquestes paraules i cap altra:",
+  '  PILAR       (pilars, pantalles de pilar)',
+  '  MURO        (murs, murs de contencio, pantalles)',
+  '  FORJADO     (forjats, sostres, lloses de forjat, lloses inclinades, escales)',
+  '  VIGA        (bigues, jasseres, congrenys)',
+  '  CIMENTACION (fonaments, sabates, rases, pous, enceps, riostres, lloses de fonamentacio, soleres)',
+  '  OTROS       (qualsevol altra cosa, o si no es pot saber del cert)',
+  "- Fixa't en el capitol o subcapitol del client d'on ve la fila (camp 'capitol') i en la seva propia descripcio.",
+  '- Aquesta paraula es una ETIQUETA INTERNA del sistema: va SEMPRE en castella i en majuscules tal com esta escrita a la llista, encara que el text del client sigui en catala ("armadura de murs" -> MURO, "armadura de lloses" -> FORJADO, "armadura de bigues" -> VIGA, "rases, pous i enceps" -> CIMENTACION).',
+  "- Inclou NOMES les files que siguin partides d'acer independents. Si no n'hi ha cap, deixa l'array buit.",
+  '',
+  'El camp "discrepancia" (tasca 1), escriu-lo en catala. El camp "etiqueta" (tasca 2), en castella i majuscules, com s’ha indicat. Els valors de la tasca 3 (acer/mallat/gruix) son sempre numeros. El camp "familia" (tasca 4) es una de les sis paraules de la llista, tal qual.'
 ].join('\n');
 
 const LOT = 15;

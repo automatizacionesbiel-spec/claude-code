@@ -10,7 +10,15 @@ const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').rep
 const BS = String.fromCharCode(92);
 const tripletsOf = (s) => { const t = String(s || '').split(BS); const o = []; for (let i = 0; i < t.length - 1; i += 3) { const c = (t[i] || '').trim(); if (c) o.push([c, t[i + 1], t[i + 2]]); } return o; };
 
-const files = $('Assigna capitols').all().map((i) => i.json);
+// FIX (2026-09-07): es llegia de "Assigna capitols", que va ABANS de l'enriquiment amb IA
+// -- per aixo r.etiqueta_curta, r.acer_kg_ia i companyia sempre eren undefined aqui i tota
+// la logica "primer la IA, el regex nomes com a reserva" era codi mort: sempre queia al
+// regex. "Aplica enriquiment" retorna exactament les mateixes files, en el mateix ordre,
+// amb els camps de la IA afegits, i ja s'ha executat molt abans que aquest node (es el que
+// llegeix "Genera BC3"). Aquest era el motiu real que l'acer es dupliques als murs del
+// 822.26: la IA ja havia etiquetat la fila com a "MUROS DE CONTENCION", pero aquest node
+// no ho veia i havia d'endevinar la familia del text catala en cru.
+const files = $('Aplica enriquiment').all().map((i) => i.json);
 const cataleg = $('Llegeix cataleg').all().map((i) => i.json).filter((r) => r && r.codi);
 const conceptes = $('Llegeix conceptes').all().map((i) => i.json).filter((r) => r && r.codi);
 const cat = {};
@@ -96,8 +104,12 @@ if (CODI_ACER) {
   for (const r of files) {
     if (!r.codi_base || r.confianca === 'ABSORBIDA') continue;
     if (String(r.codi_base) !== String(CODI_ACER.codi)) continue;
-    const font = r.etiqueta_curta || ((r.resum_excel || '') + ' ' + (r.text || ''));
-    const fam = familiaDe(font);
+    // FIX (2026-09-07): la familia la diu ara directament la IA (camp "familia_ia", ja
+    // validat contra aquesta mateixa llista d'etiquetes a "Aplica enriquiment"), que es qui
+    // enten de veritat una descripcio en text lliure -- en catala, en castella o barrejat.
+    // Les paraules clau de mes avall queden nomes com a reserva, per si aquesta execucio no
+    // ha passat per la IA o no ha sabut classificar aquella fila.
+    const fam = r.familia_ia || familiaDe(r.etiqueta_curta || ((r.resum_excel || '') + ' ' + (r.text || '')));
     if (fam) familiesAmbAcerIndependent.add(fam);
   }
 }
