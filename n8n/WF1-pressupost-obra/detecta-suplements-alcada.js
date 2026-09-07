@@ -100,7 +100,16 @@ for (const r of files) {
     resum_excel: 'Suplemento por altura: ' + supl.resum + ' (client demana ' + alcadaClient + 'm)',
     text: '',
     ud: supl.ud,
-    quantitat: qty,
+    // FIX (2026-09-07): el suplement surt SEMPRE a quantitat 0, com la resta de suplements
+    // (els fixos ja ho feien). El client no ha demanat explicitament aquests m2: els deduim
+    // nosaltres de la seva descripcio, i qui decideix quanta superficie s'acaba facturant es
+    // qui revisa el pressupost. Abans s'hi posava "qty" -- la superficie sencera d'encofrat
+    // de la partida pare -- i quedava valorat com si fos una quantitat real (822.26: el 417
+    // sortia amb 923,285 m2 heretats del 401, i el 611 amb 19,323 del 609). El calcul de
+    // "qty" es manté perque segueix fent de porta: si no hi ha superficie d'encofrat a la
+    // qual aplicar el suplement, la linia no s'emet. Si el client SI porta una partida
+    // propia per aquest suplement, "yaHiEs" ja evita duplicar-la i mana la seva quantitat.
+    quantitat: 0,
     capitol_desti: r.capitol_desti
   } });
 }

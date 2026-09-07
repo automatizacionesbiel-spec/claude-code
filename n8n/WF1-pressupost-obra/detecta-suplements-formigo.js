@@ -123,20 +123,23 @@ function actualitzaResum(resumOriginal, client, base, suplCodis, volArido10) {
     const consNou = (client.cons && base.cons && client.cons !== base.cons) ? client.cons : m[2].toUpperCase();
     const aridNou = m[3];
     let expNou = m[4];
+    // FIX (2026-09-07): el titol ha de dir SEMPRE la classe d'exposicio que demana el
+    // client, hi hagi o no un suplement de cost pel mig. Abans nomes es substituia quan el
+    // client demanava una classe d'EXP_GRUP (XC3/XC4 i amunt) que la base no portava, mes un
+    // cas especial afegit per al XC1 -- i, sobretot, es comparava contra "base", que es la
+    // designacio del MATERIAL fill (MA00.2.1 = "HORMIGON HA-25/B/20/XC2"), no la del text que
+    // estem reescrivint. A la base real les dues no sempre coincideixen: la partida 408 es
+    // titula "HORMIGON HA-25/B/20/XC1 EN MUROS" pero esta feta amb material XC2. Amb un
+    // client que demanava XC2 (obra 822.26, murs de contencio) la comparacio contra el
+    // material donava "igual" i el titol es quedava dient XC1. Ara es compara contra el que
+    // realment posa aqui (m[4]): si el client demana una altra cosa, mana el client. Els
+    // suplements de COST segueixen decidint-se a part, contra el material, a
+    // suplementsAplicables() via EXP_GRUP -- ni XC1 ni XC2 n'hi son, son nomes designacio.
     if (client.exp && client.exp.size) {
-      const expBase = new Set([...base.exp].map((e) => EXP_GRUP[e]).filter(Boolean));
-      const expClient = new Set([...client.exp].map((e) => EXP_GRUP[e]).filter(Boolean));
-      if ([...expClient].some((g) => !expBase.has(g))) expNou = [...client.exp].sort().join('+');
+      const expClient = [...client.exp].sort().join('+');
+      const expActual = (m[4].match(EXP_RE) || []).map((e) => e.toUpperCase()).sort().join('+');
+      if (expClient !== expActual) expNou = expClient;
     }
-    // FIX (2026-09-04): fins ara nomes es substituia la classe d'exposicio quan el client
-    // en demanava una MES exigent que la base (via EXP_GRUP, que nomes mapeja XC3/XC4 i
-    // amunt). Si el client demanava XC1 -- mes fluixa que el XC2 per defecte de la base --
-    // "expClient" sortia buit (XC1 no es a EXP_GRUP) i el titol es quedava amb el XC2 de la
-    // base tal qual. XC1 no necessita cap material addicional (no es un suplement de cost,
-    // nomes cal corregir la designacio), per aixo es un cas especial: activa el relabel
-    // encara que no hi hagi cap grup EXP_GRUP involucrat.
-    const xc1Canvia = client.exp.has('XC1') && !base.exp.has('XC1');
-    if (xc1Canvia) expNou = [...client.exp].sort().join('+');
     const nova = 'HA-' + haNou + '/' + consNou + '/' + aridNou + '/' + expNou;
     text = text.slice(0, m.index) + nova + text.slice(m.index + m[0].length);
   }
@@ -193,12 +196,16 @@ for (const r of files) {
   // si el client o la base no en porten designacio, es descarta sencer (com sempre).
   const potExposicio = clientDesig.ha !== null && baseDesig.ha !== null;
   const supl = potExposicio ? suplementsAplicables(clientDesig, baseDesig).filter(([sc]) => cat[sc] || con[sc]) : [];
-  // FIX (2026-09-04): quan el client demana XC1 i la base porta una classe mes exigent
-  // (normalment XC2 per defecte), cal corregir el titol/Text1 encara que aixo NO impliqui
-  // cap suplement de cost (suplementsAplicables no hi afegeix res perque XC1 no es a
-  // EXP_GRUP -- vegeu actualitzaResum). Sense aquest cas especial, "if (!supl.length)
-  // continue" saltava directament la partida i el XC2 per defecte es quedava tal qual.
-  const xc1Relabel = potExposicio && clientDesig.exp.has('XC1') && !baseDesig.exp.has('XC1');
+  // FIX (2026-09-07): qualsevol diferencia de classe d'exposicio entre el que demana el
+  // client i el que diu el TITOL de la partida obliga a corregir titol/Text1, encara que no
+  // impliqui cap suplement de cost (ni XC1 ni XC2 son a EXP_GRUP, aixi que
+  // suplementsAplicables no hi afegeix res -- vegeu actualitzaResum). Es compara contra el
+  // titol, no contra "baseDesig" (que surt del material fill): a la base real la partida 408
+  // es titula XC1 pero esta feta amb material XC2, aixi que un client que demanava XC2
+  // donava "cap diferencia" i el titol es quedava a XC1 (obra 822.26, murs de contencio).
+  const titolDesig = parseDesignacio(c.resum);
+  const expRelabel = clientDesig.ha !== null && titolDesig.ha !== null && clientDesig.exp.size > 0
+    && [...clientDesig.exp].sort().join('+') !== [...titolDesig.exp].sort().join('+');
 
   // FIX (2026-09-04): arid 10mm -- a diferencia de dalt, aixo SI s'aplica a formigo en
   // massa (HM/HL), no nomes armat -- per aixo es independent de "potExposicio".
@@ -207,11 +214,11 @@ for (const r of files) {
     && volArid10(textClientCru) && arid10DeLaBase(concreteLine.resum) !== 10;
   if (volArido10) supl.push([ARID_CODI, "arido 10mm indicat pel client (la base nomes disposa d'arido 12, la mida mes petita)"]);
 
-  if (!supl.length && !xc1Relabel) continue;
+  if (!supl.length && !expRelabel) continue;
 
   const suplCodis = supl.map((s) => s[0]);
   const motius = supl.map((s) => s[1]);
-  if (xc1Relabel) motius.push("classe d'exposicio XC1 (la base porta " + [...baseDesig.exp].join('+') + ')');
+  if (expRelabel) motius.push("classe d'exposicio " + [...clientDesig.exp].sort().join('+') + ' (el titol de la base deia ' + ([...titolDesig.exp].join('+') || 'cap') + ')');
   out.push({ json: {
     ordre: r.ordre,
     codi_base: r.codi_base,

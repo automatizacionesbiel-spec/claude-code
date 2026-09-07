@@ -5,6 +5,71 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 11: five defects found in obra 822.26 (Hospital Sant Camil)
+
+Reported against the BC3 of execution #124, cross-checked against the client's
+Excel and the price base. All five are fixed and pushed; each node was re-fetched
+from n8n afterwards and diffed byte-for-byte against the file here.
+
+Note: this batch starts from commit `2ab0032`, which re-baselines every mirrored
+node from the live workflow. The live workflow had drifted well ahead of this
+repo (an AI-enrichment layer, a new `Detecta espessor` node and a reworked
+`detecta-acer.js`, all pushed straight to n8n on 2026-09-04 and never committed).
+**Always diff live-vs-repo before assuming this repo is current.**
+
+1. **Steel injected again on top of a standalone steel item** (`detecta-acer.js`).
+   The family keywords that detect "the client already bills this family's steel
+   separately" were Spanish-only, but these clients write in Catalan: `murs` does
+   not contain `muro`, `lloses` does not contain `losa`, `bigues`/`jàsseres`
+   contain neither `viga` nor `jacena`. Only `pilar` and `fonament` matched by
+   accident — which is exactly why columns and foundations deduplicated correctly
+   while walls, slabs and beams did not, and 408.S1/408.S2/310.S1/310.S2/70003.S1
+   all carried a spurious `0.0` at 2 kg. `FAMILY_MAP` now carries both spellings,
+   with `FORJADO` ordered before `VIGA` (slab texts mention "jàsseres embegudes"
+   in passing).
+
+2. **Exposure class stuck at the base's value** (`detecta-suplements-formigo.js`).
+   The client asked for XC2 and the title kept saying XC1. The relabel compared
+   the client's classes against the *child material's* designation, but base item
+   408 is titled `HA-25/B/20/XC1` while being built from `MA00.2.1`
+   (`HORMIGÓN HA-25/B/20/XC2`) — so the comparison said "no difference" and the
+   title was never touched. The relabel now compares against what the title itself
+   says; cost supplements still compare against the material (neither XC1 nor XC2
+   is in `EXP_GRUP`, they are designation only). This also replaces the previous
+   XC1-only special case with a single rule covering every direction.
+
+3. **Height supplements carried a real quantity** (`detecta-suplements-alcada.js`).
+   417 went out with 923,285 m² and 611 with 19,323 m² — the parent formwork
+   item's whole surface, inherited as if it had been measured. Supplements now
+   always go out at 0, like the fixed ones. The computed area is still used, but
+   only as the gate deciding whether the supplement applies at all; when the
+   client has their own line for that supplement, `yaHiEs` already suppresses ours
+   and their quantity stands.
+
+4. **Base "optional" lines left at 0** (`genera-bc3.js`). Many base items ship
+   lines at rendiment 0 as a menu the estimator resolves by hand — steel `0.0`,
+   `FRATASADO MECÁNICO + CORTE JUNTAS`, `MOQUETA PROTECCIÓN`. They were emitted
+   verbatim, so Presto showed lines with a blank quantity, and the contract text
+   promised things the decomposition never priced: an `acero b500s ... Q=  kg/m3`
+   with no number, and a mesh layer nobody had asked for. A new pass now resolves
+   each one for every item: activated at 1 when the client's own description asks
+   for it, removed — line *and* sentence — when it does not. Catalan "remolinat
+   mecànic" counts as fratasado (confirmed with the user), and activating it also
+   flips the title's `NO FRATASADO` and drops the matching `No incluye` line. The
+   steel sentence is only removed when it carries the fillable `Q=` placeholder:
+   the `-. Elaboración ... de acero B500S` that many bases list under `No incluye`
+   is a legitimate exclusion and is left alone. Prices are recomputed by the same
+   formula the injection path uses.
+
+5. **Beam rows landing inside the wall item** — *not a code defect*. Client item
+   `P4537-IMS0` ("Formigó per a bigues, HA-30/B/20/XC1") is mapped to base code
+   `408` (muros) in the `diccionari_matches` data table, learned from an earlier
+   obra; the row shows `confianca: DICCIONARI`, "Match apres en obres anteriors".
+   The workflow is doing what the dictionary tells it. The fix is to correct that
+   entry — either in the revision sheet on the next obra (which re-learns it) or
+   by deleting the row in the n8n data table UI. The MCP surface exposes no
+   row-level update or delete, so it was not changed from here.
+
 ## Change 10: recreated the missing `Detecta encofrat` node
 
 Requested after Change 9 flagged it: `genera-bc3.js` had been reading `$('Detecta encofrat')`

@@ -434,6 +434,94 @@ for (const r of files) {
         if (mTextG) text = text.slice(0, mTextG.index) + mTextG[1] + gruixStr + mTextG[3] + text.slice(mTextG.index + mTextG[0].length);
       }
 
+      // FIX (2026-09-07): moltes partides de la base venen amb linies OPCIONALS a rendiment
+      // 0 -- son un "menu" que qui fa el pressupost activa o esborra a ma segons el que
+      // demani el client. Fins ara sortien tal qual al BC3: a Presto es veuen com a linies
+      // amb la quantitat en blanc (822.26, partida 201: l'acer "0.0" a 0 i el "FRATASADO
+      // MECANICO + CORTE JUNTAS" a 0), i el text contractual prometia coses dins l'INCLUYE
+      // que la descomposicio no valorava ("...acero b500s, en obra. Q=  kg/m3", sense cap
+      // numero, i una capa de mallazo que ningu havia demanat). Ara es resolen sempre:
+      // s'activen si el client les demana i, si no, s'esborren -- linia i frase alhora.
+      const textClientRaw = String(r.resum_excel || '') + ' ' + String(r.text || '');
+      const textClientNorm = norm(textClientRaw);
+      const treuLinia = (t, re) => {
+        const m = t.match(re);
+        if (!m) return t;
+        let ini = t.lastIndexOf('\n', m.index);
+        ini = ini === -1 ? 0 : ini + 1;
+        let fi = t.indexOf('\n', m.index + m[0].length);
+        fi = fi === -1 ? t.length : fi + 1;
+        return t.slice(0, ini) + t.slice(fi);
+      };
+      const triplesFinal = tripletsOf(desc);
+      let netejat = false;
+
+      // Resol una linia OPCIONAL de la base (la te a rendiment 0): si el client la demana al
+      // seu text s'activa a 1, i si no s'esborra. Mai es deixa a 0.
+      const resolOpcional = (esLaLinia, laDemana) => {
+        let resultat = null;
+        for (let i = triplesFinal.length - 1; i >= 0; i--) {
+          const [kk, ff, rend] = triplesFinal[i];
+          if ((Number(rend) || 0) !== 0) continue;
+          const src = con[kk] || cat[kk];
+          if (!src || !esLaLinia.test(norm(src.resum))) continue;
+          if (laDemana.test(textClientNorm)) { triplesFinal[i] = [kk, ff, fmt(1)]; resultat = 'activat'; }
+          else { triplesFinal.splice(i, 1); resultat = resultat || 'esborrat'; }
+          netejat = true;
+        }
+        return resultat;
+      };
+
+      // 1. Acer a rendiment 0: no s'hi ha injectat res (o be el client ja porta una partida
+      //    d'acer independent per aquesta familia, o be no n'hi havia). La linia sobra, i amb
+      //    ella la frase de l'INCLUYE que en prometia una quantitat. Nomes es toca la frase
+      //    que porta el forat "Q=" per omplir: el "-. Elaboracion... de acero B500S" que
+      //    moltes bases tenen sota "No incluye" es una exclusio legitima i s'ha de respectar.
+      for (let i = triplesFinal.length - 1; i >= 0; i--) {
+        const [kk, , rend] = triplesFinal[i];
+        if ((Number(rend) || 0) !== 0) continue;
+        const src = con[kk] || cat[kk];
+        if (!src || !/acero corrugado|acer corrugat/.test(norm(src.resum))) continue;
+        triplesFinal.splice(i, 1);
+        netejat = true;
+        text = treuLinia(text, /[^\n]*acero[^\n]*q\.?\s*(?:estimad[ao])?\s*=[^\n]*kg[^\n]*/i);
+      }
+
+      // 2. Fratasat mecanic: fora per defecte (la base ja diu "NO FRATASADO" al titol i el
+      //    posa a 0), i nomes s'activa si el client el demana explicitament -- en catala en
+      //    diuen "remolinat", que es el cas real de la solera del 822.26. Quan s'activa, el
+      //    titol i el "No incluye" han de deixar de dir el contrari.
+      if (resolOpcional(/fratasad|remolinad/, /fratasad|fratasat|remolinat|remolinad|helicopter/) === 'activat') {
+        resum = resum.replace(/\bNO\s+FRATASADO\b/i, 'FRATASADO');
+        text = treuLinia(text, /[^\n]*fratasado\s+mecanico[^\n]*/i);
+      }
+
+      // 3. Moqueta de proteccio (galga de polietile, partida 207): mateixa regla. La base
+      //    porta la moqueta i la seva col·locacio a 0 com a alternativa a la lamina, i nomes
+      //    te sentit cobrar-la si el client demana una manta/moqueta de proteccio.
+      resolOpcional(/moqueta/, /moqueta|manta\s+(?:de\s+)?protecci/);
+
+      // 4. Mallat: si "Detecta mallat" no n'ha trobat cap per aquesta fila, el client no n'ha
+      //    demanat, aixi que la frase de mallazo que la base porta dins l'INCLUYE sobra (al
+      //    822.26 el mallat de les soleres ja venia com a partida independent del client).
+      if (!mallatTextExtra) {
+        const netMalla = treuLinia(text, /[^\n]*malla(?:zo)?\s+electrosoldada[^\n]*/i);
+        if (netMalla !== text) { text = netMalla; netejat = true; }
+      }
+
+      if (netejat) {
+        desc = triplesFinal.map(([kk, ff, rr]) => kk + BS + ff + BS + rr + BS).join('');
+        let sumFills = 0;
+        let ggRate = 0;
+        for (const [kk, , rendiment] of triplesFinal) {
+          if (kk === '%24') { ggRate = Number(rendiment) || 0; continue; }
+          const src = con[kk] || cat[kk];
+          if (!src) continue;
+          sumFills += (Number(rendiment) || 0) * (Number(src.preu) || 0);
+        }
+        preu = Math.round(sumFills * (1 + ggRate) * 100) / 100;
+      }
+
       entries[key] = { code, ud: String(c.ud || ''), resum, text, preu, desc, capKey, qty: 0, lines: [] };
       orderKeys.push(key);
     }

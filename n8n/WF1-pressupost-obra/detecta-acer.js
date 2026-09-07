@@ -73,12 +73,21 @@ function extreuQuantitatAcer(text) {
 //    una etiqueta curta fiable per distingir aquestes files (es exactament el que apareix com
 //    a comentari de mesura al BC3: "MURO", "PILARES", "LOSAS ESTRUCTURA"...) -- ara es dona
 //    prioritat a aquesta etiqueta abans de recorrer al text en cru.
+// FIX (2026-09-07, ronda 4): les paraules clau eren nomes en CASTELLA, pero els excels
+// d'aquests clients venen en CATALA i la grafia no coincideix -- "murs" no conte "muro",
+// "lloses" no conte "losa", "bigues"/"jasseres" no conten "viga"/"jacena". Nomes coincidien
+// per casualitat "pilars" (conte "pilar") i "fonamentacions" (conte "fonament"), i per aixo
+// pilars i cimentacio SI es deduplicaven i murs, lloses i vigues no (obra 822.26: l'acer es
+// tornava a injectar a 408.S1/408.S2/310.S1/310.S2/70003.S1 tot i tenir el client partides
+// d'acer independents per a "murs", "lloses" i "bigues"). Ara cada familia porta les dues
+// grafies. L'ordre importa: FORJADO va abans que VIGA perque els textos de lloses solen
+// esmentar "jasseres embegudes" de passada.
 const FAMILY_MAP = [
   { tag: 'PILAR', re: /pilar/ },
-  { tag: 'MURO', re: /muro|pantalla/ },
-  { tag: 'FORJADO', re: /forjado|losa/ },
-  { tag: 'VIGA', re: /viga|jacena/ },
-  { tag: 'CIMENTACION', re: /cimentacio|fonament|zanja|poz[oa]s?|zapata|riostra|solera|encepado|enceps/ }
+  { tag: 'MURO', re: /muro|\bmurs?\b|pantalla/ },
+  { tag: 'FORJADO', re: /forjado|forjat|losa|llos[ae]s?|sostres?/ },
+  { tag: 'VIGA', re: /viga|\bbig(?:a|as|ues|es)\b|jacena|jasser/ },
+  { tag: 'CIMENTACION', re: /cimentacio|fonament|zanja|\brasa|poz[oa]s?|\bpous?\b|zapata|sabata|riostra|soler[ae]s?|encepado|enceps/ }
 ];
 const familiaDe = (text) => { const t = norm(text); const f = FAMILY_MAP.find((x) => x.re.test(t)); return f ? f.tag : null; };
 
