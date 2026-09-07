@@ -5,6 +5,32 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 13: extended Change 12's fix to the height-supplement node
+
+`detecta-suplements-alcada.js` turned out to carry the exact same two bugs
+Change 12 fixed elsewhere:
+
+1. It read `$('Assigna capitols')` (pre-enrichment), so any future AI-extracted
+   height value would have been invisible to it, same as acer/mallat/gruix
+   before Change 12. Fixed the same way — reads `$('Aplica enriquiment')` now.
+2. Its family lookup (which of pilar/muro/forjado a base item belongs to, to
+   pick the right height-supplement code) only checked `capitol_desc`/`capitol`
+   — which real bases often leave generic ("ESTRUCTURAS"), exactly the bug
+   fixed in `detecta-acer.js` in Change 11. Fixed the same way: check the
+   item's own title (`c.resum`, which reliably says "EN MUROS H=<3MTS.") first,
+   falling back to the chapter only if the title doesn't match.
+
+Also added `alcada` (height, m) as a fifth field to the AI enrichment schema,
+consistent with acer/mallat/gruix — the client's phrasing for "taller than
+the base's default 3m" varies just as much as those. `detecta-suplements-
+alcada.js` now prefers `r.alcada_ia` over its own regex, same pattern as the
+other three detectors.
+
+Verified with a standalone simulation using the real base's item 401
+(`ENCOFRADO MURO 2C. RECTO NV H=<3M.`, chapter "ESTRUCTURAS") and item 417's
+real supplement chain: family resolves via title fallback, and the AI/regex
+height sources both feed through correctly.
+
 ## Change 12: connected the AI-enrichment layer to the nodes meant to use it
 
 Prompted by the question "wouldn't AI handle these varying Excels better than

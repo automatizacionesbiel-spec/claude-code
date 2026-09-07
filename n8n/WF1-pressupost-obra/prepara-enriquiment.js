@@ -3,12 +3,14 @@
 // client demana alguna cosa que la partida emparellada no cobreix (com abans), es decideix
 // si cal una etiqueta curta al comentari de cada linia de mesura del BC3 (2026-09-02), i
 // ADEMES (2026-09-04) s'extreuen els valors numerics que el client hagi indicat en text
-// lliure (kg d'acer, mides de mallat, gruix) -- abans aixo nomes s'intentava amb regex a
-// "Detecta acer"/"Detecta mallat"/"Detecta espessor", pero el llenguatge natural del client
-// (ordre de les paraules, catala/castella barrejat, frases llargues amb la dosificacio de
-// ciment pel mig...) es massa variable per cap regex fiable. La IA ho entén molt millor;
-// els nodes "Detecta..." fan servir aquest valor com a font PRINCIPAL i nomes recorren al
-// seu propi regex com a reserva (si aquesta execucio no ha passat per aqui, o no hi ha res).
+// lliure (kg d'acer, mides de mallat, gruix, i des de 2026-09-07 tambe alçada) -- abans aixo
+// nomes s'intentava amb regex a "Detecta acer"/"Detecta mallat"/"Detecta espessor"/"Detecta
+// suplements alcada", pero el llenguatge natural del client (ordre de les paraules,
+// catala/castella barrejat, frases llargues amb la dosificacio de ciment pel mig...) es
+// massa variable per cap regex fiable. La IA ho entén molt millor; els nodes "Detecta..."
+// fan servir aquest valor com a font PRINCIPAL i nomes recorren al seu propi regex com a
+// reserva (si aquesta execucio no ha passat per aqui, o no hi ha res). Tambe (2026-09-07)
+// s'hi afegeix la familia estructural de les partides d'acer independents (vegeu tasca 4).
 const files = $input.all().map((i) => i.json);
 
 // Un codi del cataleg = UN concepte al BC3. S'agrupa per codi, pero ara es guarda CADA
@@ -97,9 +99,20 @@ const SCHEMA = {
         required: ['ordre', 'familia'],
         additionalProperties: false
       }
+    },
+    // FIX (2026-09-07): alçada real que demana el client per a pilars/murs/forjats, quan
+    // supera els 3m que ja porta la base per defecte -- mateix patro que acer/mallat/gruix.
+    alcada: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { ordre: { type: 'integer' }, m: { type: 'number' } },
+        required: ['ordre', 'm'],
+        additionalProperties: false
+      }
     }
   },
-  required: ['avisos', 'etiquetes', 'acer', 'mallat', 'gruix', 'families'],
+  required: ['avisos', 'etiquetes', 'acer', 'mallat', 'gruix', 'families', 'alcada'],
   additionalProperties: false
 };
 
@@ -143,6 +156,7 @@ const REGLES = [
   "- ACER (kg): quantitat real d'acer/armadura/ferralla corrugada que el client indiqui, en KG per unitat de la partida (kg/m2 o kg/m3, la xifra tal qual, sense l'extra de seguretat que ja afegeix el sistema per la seva banda).",
   '- MALLAT: si el client esmenta un mallazo/malla electrosoldada amb dues mides (A x B, en cm) i un diametre de filferro (D, en mm) -- independentment de l’ordre en que ho escrigui, o si ho fa en catala o en castella.',
   '- GRUIX (cm): NOMES si el client indica explicitament un gruix/espessor/grosor/canto en centimetres per a l’element (llosa, forjat, solera, capa de neteja) que sigui una dada real d’aquest projecte -- si nomes repeteix el mateix gruix que ja porta el titol de la partida no cal reportar-lo (no fa cap mal si ho fas, pero no es necessari).',
+  "- ALÇADA (m): NOMES per a pilars/murs/forjats, i NOMES quan el client indiqui una alçada REAL superior a 3m (\"H<=5M\", \"altura de 4,5m\", \"fins a 6m\"). Si no diu alçada, o es <=3m (el que ja porta la base per defecte), no cal reportar-la.",
   '- Inclou NOMES els "ordre" on hi hagi una xifra clara d’aquell tipus concret. Si no hi ha cap valor d’un tipus per cap fila, deixa aquell array buit.',
   '',
   "4) FAMILIA ESTRUCTURAL de les partides d'ACER independents:",
@@ -158,7 +172,7 @@ const REGLES = [
   '- Aquesta paraula es una ETIQUETA INTERNA del sistema: va SEMPRE en castella i en majuscules tal com esta escrita a la llista, encara que el text del client sigui en catala ("armadura de murs" -> MURO, "armadura de lloses" -> FORJADO, "armadura de bigues" -> VIGA, "rases, pous i enceps" -> CIMENTACION).',
   "- Inclou NOMES les files que siguin partides d'acer independents. Si no n'hi ha cap, deixa l'array buit.",
   '',
-  'El camp "discrepancia" (tasca 1), escriu-lo en catala. El camp "etiqueta" (tasca 2), en castella i majuscules, com s’ha indicat. Els valors de la tasca 3 (acer/mallat/gruix) son sempre numeros. El camp "familia" (tasca 4) es una de les sis paraules de la llista, tal qual.'
+  'El camp "discrepancia" (tasca 1), escriu-lo en catala. El camp "etiqueta" (tasca 2), en castella i majuscules, com s’ha indicat. Els valors de la tasca 3 (acer/mallat/gruix/alçada) son sempre numeros. El camp "familia" (tasca 4) es una de les sis paraules de la llista, tal qual.'
 ].join('\n');
 
 const LOT = 15;

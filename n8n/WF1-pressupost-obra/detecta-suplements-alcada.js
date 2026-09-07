@@ -9,7 +9,12 @@ const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').rep
 const BS = String.fromCharCode(92);
 const tripletsOf = (s) => { const t = String(s || '').split(BS); const o = []; for (let i = 0; i < t.length - 1; i += 3) { const c = (t[i] || '').trim(); if (c) o.push([c, t[i + 1], t[i + 2]]); } return o; };
 
-const files = $('Assigna capitols').all().map((i) => i.json);
+// FIX (2026-09-07): es llegia de "Assigna capitols", que va ABANS de l'enriquiment amb IA
+// -- mateix bug que ja es va trobar a "Detecta acer"/"Detecta mallat"/"Detecta espessor":
+// r.alcada_ia sempre era undefined aqui, aixi que la IA mai arribava a substituir res.
+// "Aplica enriquiment" retorna les mateixes files, en el mateix ordre, amb els camps de la
+// IA afegits, i ja s'ha executat molt abans que aquest node.
+const files = $('Aplica enriquiment').all().map((i) => i.json);
 const cataleg = $('Llegeix cataleg').all().map((i) => i.json).filter((r) => r && r.codi);
 const conceptes = $('Llegeix conceptes').all().map((i) => i.json).filter((r) => r && r.codi);
 const cat = {};
@@ -72,11 +77,22 @@ for (const r of files) {
   const c = cat[String(r.codi_base)];
   if (!c) continue;
 
+  // FIX (2026-09-07): mateix bug de familia que ja es va trobar i corregir a "Detecta acer"
+  // -- amb bases reals que agrupen TOT sota un capitol generic ("ESTRUCTURAS"), capitol_desc
+  // mai diu "muros"/"pilares"/"forjados" i la familia no es trobava mai. El RESUM de la
+  // propia base (el titol) si ho diu sempre ("HORMIGON HA-25/... EN MUROS H=<3MTS."), amb
+  // independencia de com estigui organitzat el capitol -- es mira primer, i capitol_desc
+  // nomes queda com a reserva.
+  const resumBase = norm(c.resum || '');
   const capBase = norm(c.capitol_desc || c.capitol || '');
-  const familia = FAMILIES.find((f) => f.keyword.test(capBase));
+  const familia = FAMILIES.find((f) => f.keyword.test(resumBase)) || FAMILIES.find((f) => f.keyword.test(capBase));
   if (!familia) continue;
 
-  const alcadaClient = extreuAlcada((r.resum_excel || '') + ' ' + (r.text || ''));
+  // FIX (2026-09-07): prioritat a l'alçada que ja ha extret "Enriquiment IA" -- enten molt
+  // millor el llenguatge natural del client que cap regex. El regex propi nomes queda com a
+  // reserva (si aquesta execucio no ha passat per la IA, o no ha trobat res per aquesta fila).
+  const alcadaIa = Number(r.alcada_ia);
+  const alcadaClient = (alcadaIa > 0) ? alcadaIa : extreuAlcada((r.resum_excel || '') + ' ' + (r.text || ''));
   if (alcadaClient === null || alcadaClient <= 3) continue;
 
   const supl = trobaSuplementAlcada(familia, alcadaClient);
