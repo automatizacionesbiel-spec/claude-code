@@ -5,6 +5,85 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 15: obra 823.26 review — arid-10 structured detection + HM/HL support
+
+Prompted by the user reporting multiple failures in obra 823.26's generated
+BC3 (uploading the review spreadsheet, the generated BC3, and a labor-rate
+Excel): arid size wasn't corrected to 10 when the client asked for it, an
+HM (mass concrete) item requested "fluid" consistency but kept the base's
+default "B", the losa item used the formwork code instead of the concrete
+one, and composite (concrete+formwork) items weren't billed with separate
+formwork.
+
+**Fixed in `detecta-suplements-formigo.js`:**
+
+1. **Arid-10 only detected from free prose.** `volArid10()` scanned the
+   surrounding text for the literal word "arido"/"arid" near a standalone
+   "10" — but several 823.26 rows state the arid size only inside the
+   client's own structured designation (`HA-25/F/10/XC2`, arid as the 3rd
+   slash-separated segment), never repeating the word "arido" anywhere in
+   the text. `parseDesignacio()` now also captures an `arid` field, and the
+   arid-10 trigger is extended to `volArid10(text) || clientDesig.arid ===
+   10`. Confirmed against execution #125: ordre 6 and 18 both state arid 10
+   only in their own `HA-.../10/...` designation and were previously left
+   at the base's 20.
+   - **Known remaining gap, not fixed by this change:** several other
+     823.26 rows (ordre 12, 13, 17, 30, 31, 32, 36) have the arid size
+     corrupted in the source Excel as `"1 O"` (digit, space, capital letter
+     O) instead of `"10"` — an apparent PDF/OCR artifact in the client's
+     file, not a workflow bug. This is deliberately **not** patched with a
+     blanket regex (e.g. `/1\s*o\b/i` → `10`), because standalone `"o"` is
+     a legitimate Catalan/Spanish word for "or" (as in `"20 o 25"`) and a
+     blind substitution risks corrupting genuine prose elsewhere. These
+     rows will keep needing a manual correction on the review sheet.
+2. **HM/HL (mass/lean concrete) never entered the grade/consistency/
+   exposure system at all.** `parseDesignacio()`'s regex required a literal
+   `HA` prefix, so `client.ha`/`base.ha` stayed `null` for any `HM-.../...`
+   or `HL-.../...` item and `potExposicio` was always false — the entire
+   supplement system silently no-op'd. Confirmed via execution #125: ordre
+   5 (HM cimentació, client requests fluid consistency) produced zero
+   output from this node. Broadened the regex to `h([aml])...` with an
+   **optional** 4th (exposure) segment — HM/HL titles are frequently only
+   3 segments since exposure class is an armat-only concept — and captured
+   the matched prefix as a new `tipus` field (`'HA'`/`'HM'`/`'HL'`).
+   - The HA-30/HA-35 grade-upgrade materials (`MA00.2.2`/`MA00.2.2.2`) are
+     gated to `tipus === 'HA'` only: no catalog material represents a grade
+     bump for mass concrete, so an HM grade mismatch is deliberately left
+     as an AI-flagged discrepancy rather than silently relabelled without
+     real cost backing.
+   - The base's HM/HL *material* line often doesn't itself encode
+     consistency (e.g. "HORMIGÓN HM - 20" with no `/B/20`), unlike HA
+     materials which always do. Added a `baseEfectiu` object that prefers
+     the material's own parsed consistency and falls back to the item's
+     *title* (`titolDesig`) when the material doesn't state one.
+   - `actualitzaResum()` had the same `HA`-only, exposure-mandatory pattern
+     for rewriting the title/Texto 1, so it never found a substitution
+     point in 3-segment HM/HL titles either. Broadened the same way, and
+     switched all its internal grade/consistency/exposure comparisons to
+     read from what the *text being edited* actually says (its own regex
+     capture groups) rather than the external `base` parameter — consistent
+     with the fix already applied earlier for the exposure-class relabel.
+
+All changes validated with a standalone test script covering 4 real cases
+from obra 823.26's execution #125 plus 8 regression cases from earlier
+validated scenarios (12/12 passed) before pushing.
+
+**Not yet addressed (architecturally deferred, flagged to the user):** the
+losa-uses-formwork-code-instead-of-concrete-code issue and the
+pilar/mur-missing-separate-formwork-billing issue. Root cause: this
+catalog has no true `[COMPOSTA]` (single item combining concrete +
+formwork) entries for losa/pilar/mur — concrete and formwork are always
+two separate simple catalog items (310/311 for losa, 604/602 for pilar,
+408/401 for mur) — yet the client's Excel describes both scopes in **one**
+row per element. The system can only assign one `codi_base` per client
+row, so today it either bills only formwork (losa, dictionary entry
+pointing to 311 instead of 310) or only concrete with formwork left at
+zero quantity (pilar/mur). This needs a new mechanism (proposed: mirror
+`detecta-suplements-alcada.js`'s pattern to derive an independent formwork
+quantity from the client's stated ratio, e.g. "amb una quantia de 14
+m2/m3", applied to the row's own matched concrete quantity) and has not
+been implemented.
+
 ## Change 14: fixed the root cause of a bad learned dictionary match
 
 Prompted by the user asking whether the `diccionari_matches` data table (which

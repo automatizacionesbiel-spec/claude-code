@@ -12,20 +12,34 @@ const EXP_RE = /\b(x[acdfs]\d)\b/gi;
 
 function parseDesignacio(text) {
   const t = norm(text);
-  const out = { ha: null, cons: null, exp: new Set(), autocompactable: false, hidrofug: false, blanco: false, sr: false, mr: false };
+  const out = { tipus: null, ha: null, cons: null, arid: null, exp: new Set(), autocompactable: false, hidrofug: false, blanco: false, sr: false, mr: false };
   // FIX (2026-09-02): el client sovint escriu "HA - 35" amb espais al voltant del
   // guionet (copiat de Word, o estil catala habitual), no "HA-35" enganxat. La regex
   // nomes permetia un guionet SENSE espais, aixi que cap designacio amb espais feia
   // match mai -- ni tan sols el patro de reserva nomes-HA. Provat contra un cas real
   // ("HA - 35 / B / 20 / xC4 + XS1 + XA3") que abans donava null i ara fa match be.
-  const m = t.match(/ha\s*-?\s*(\d{2})\s*\/\s*([bfl])\s*\/\s*(\d{1,2})\s*\/\s*(x[acdfs]\d(?:\s*(?:o|,|\+)\s*x[acdfs]\d)*)/);
+  // FIX (2026-09-07): nomes es reconeixia el prefix "HA" (formigo armat). El formigo EN
+  // MASSA (HM) i el DE NETEJA (HL) fan servir el mateix format ("HM-20/B/20") pero amb un
+  // altre prefix, i sovint sense la 4a part (classe d'exposicio -- nomes te sentit per a
+  // l'armat, encara que a vegades el client hi posi "X0"). Amb el prefix fix a "ha" i
+  // l'exposicio obligatoria, CAP designacio HM/HL feia match mai: un client que demanava
+  // "HM-25/F/20" (consistencia fluida) quan la base porta "HM-20/B/20" no s'assabentava de
+  // res (potExposicio sortia fals) i es quedava amb la consistencia B per defecte (obra
+  // 823.26). Ara accepta H[AML] i fa l'exposicio OPCIONAL; tambe es guarda "tipus"
+  // (HA/HM/HL, per no confondre mai un suplement propi de l'armat -- com la pujada de grau
+  // HA-30 -- amb formigo en massa, que no en te cap d'equivalent) i "arid" (abans es
+  // capturava pero es llençava; ara cal per detectar quan el client demana un arid
+  // diferent expressat DINS la propia designacio, no nomes en prosa lliure).
+  const m = t.match(/h([aml])\s*-?\s*(\d{2,3})\s*\/\s*([bfl])\s*\/\s*(\d{1,3})(?:\s*\/\s*(x[acdfs]\d(?:\s*(?:o|,|\+)\s*x[acdfs]\d)*))?/);
   if (m) {
-    out.ha = parseInt(m[1], 10);
-    out.cons = CONS_MAP[m[2]] || m[2].toUpperCase();
-    for (const e of (m[4].match(EXP_RE) || [])) out.exp.add(e.toUpperCase());
+    out.tipus = 'H' + m[1].toUpperCase();
+    out.ha = parseInt(m[2], 10);
+    out.cons = CONS_MAP[m[3]] || m[3].toUpperCase();
+    out.arid = parseInt(m[4], 10);
+    if (m[5]) for (const e of (m[5].match(EXP_RE) || [])) out.exp.add(e.toUpperCase());
   } else {
-    const m2 = t.match(/ha\s*-?\s*(\d{2})/);
-    if (m2) out.ha = parseInt(m2[1], 10);
+    const m2 = t.match(/h([aml])\s*-?\s*(\d{2,3})/);
+    if (m2) { out.tipus = 'H' + m2[1].toUpperCase(); out.ha = parseInt(m2[2], 10); }
     for (const e of (t.match(EXP_RE) || [])) out.exp.add(e.toUpperCase());
     for (const k of Object.keys(CONS_MAP)) {
       if (new RegExp('\\bconsistencia\\s+' + k + '\\b').test(t)) { out.cons = CONS_MAP[k]; break; }
@@ -53,7 +67,13 @@ const EXP_CODI = { 'XC3-4': 'MA00.2.6.', 'XA1-2-3': 'MA00.2.666', XF1: 'MA00.2.8
 function suplementsAplicables(client, base) {
   const out = [];
   if (base.ha === null) return out;
-  if (client.ha && client.ha > base.ha) {
+  // FIX (2026-09-07): el suplement de grau (HA-30/HA-35, materials MA00.2.2/MA00.2.2.2) es
+  // especific del formigo ARMAT -- son additius pensats per a HA, i no hi ha cap material al
+  // cataleg que representi pujar de grau un formigo EN MASSA (HM). Si el client demana
+  // HM-25 quan la base porta HM-20 nomes queda com a avis pel tecnic ("discrepancia",
+  // ja el detecta la IA): no s'injecta res, perque no hi ha cap material real que ho
+  // representi correctament.
+  if (client.tipus === 'HA' && base.tipus === 'HA' && client.ha && client.ha > base.ha) {
     if (client.ha >= 35) out.push(['MA00.2.2.2', 'formigo HA-35 (base porta HA-' + base.ha + ')']);
     else if (client.ha >= 30) out.push(['MA00.2.2', 'formigo HA-30 (base porta HA-' + base.ha + ')']);
   }
@@ -117,30 +137,35 @@ function substitueixArid10(textOriginal) {
 // de propietats (hidrofug, autocompactable...) que no formen part d'aquest patro.
 function actualitzaResum(resumOriginal, client, base, suplCodis, volArido10) {
   let text = String(resumOriginal || '');
-  const m = text.match(/HA\s*-?\s*(\d{2})\s*\/\s*([BFL])\s*\/\s*(\d{1,2})\s*\/\s*(X[ACDFS]\d(?:\s*[+,]\s*X[ACDFS]\d)*)/i);
+  // FIX (2026-09-07): nomes es reconeixia "HA" amb exposicio OBLIGATORIA (4 trossos). El
+  // formigo en massa (HM/HL) fa servir el mateix format pero sovint amb nomes 3 trossos
+  // (sense exposicio: "HM-20/B/20") -- amb aquest patro cap titol de formigo en massa
+  // trobava mai el forat on corregir la consistencia, encara que "suplementsAplicables" ja
+  // hagues decidit que calia (823.26: "HM-20/B/20" es quedava tal qual quan el client
+  // demanava fluid). Ara "H[AML]" i l'exposicio son opcionals.
+  const m = text.match(/H([AML])\s*-?\s*(\d{2,3})\s*\/\s*([BFL])\s*\/\s*(\d{1,3})(?:\s*\/\s*(X[ACDFS]\d(?:\s*[+,]\s*X[ACDFS]\d)*))?/i);
   if (m) {
-    const haNou = (client.ha && client.ha > base.ha) ? client.ha : m[1];
-    const consNou = (client.cons && base.cons && client.cons !== base.cons) ? client.cons : m[2].toUpperCase();
-    const aridNou = m[3];
-    let expNou = m[4];
-    // FIX (2026-09-07): el titol ha de dir SEMPRE la classe d'exposicio que demana el
-    // client, hi hagi o no un suplement de cost pel mig. Abans nomes es substituia quan el
-    // client demanava una classe d'EXP_GRUP (XC3/XC4 i amunt) que la base no portava, mes un
-    // cas especial afegit per al XC1 -- i, sobretot, es comparava contra "base", que es la
-    // designacio del MATERIAL fill (MA00.2.1 = "HORMIGON HA-25/B/20/XC2"), no la del text que
-    // estem reescrivint. A la base real les dues no sempre coincideixen: la partida 408 es
-    // titula "HORMIGON HA-25/B/20/XC1 EN MUROS" pero esta feta amb material XC2. Amb un
-    // client que demanava XC2 (obra 822.26, murs de contencio) la comparacio contra el
-    // material donava "igual" i el titol es quedava dient XC1. Ara es compara contra el que
-    // realment posa aqui (m[4]): si el client demana una altra cosa, mana el client. Els
-    // suplements de COST segueixen decidint-se a part, contra el material, a
-    // suplementsAplicables() via EXP_GRUP -- ni XC1 ni XC2 n'hi son, son nomes designacio.
-    if (client.exp && client.exp.size) {
+    const tipusText = 'H' + m[1].toUpperCase();
+    // FIX (2026-09-07): totes les comparacions es fan ara contra el que REALMENT diu aquest
+    // text (m[2]/m[3]/m[5]), no contra "base" (la designacio del material fill) -- mateix
+    // motiu que ja es va corregir per a l'exposicio: a la base real el titol i el material
+    // no sempre coincideixen (408 es titulava XC1 amb material XC2), i el mateix pot passar
+    // amb grau o consistencia. El grau nomes es reescriu quan el client demana un formigo
+    // ARMAT (HA) de grau superior -- es l'unic cas amb material real (MA00.2.2/.2.2.2); cap
+    // material representa un salt de grau en massa (HM), aixi que reescriure'l sense cost
+    // real associat seria enganyos -- es queda tal qual i nomes avisa (discrepancia).
+    const gradeActual = parseInt(m[2], 10);
+    const haNou = (client.tipus === 'HA' && tipusText === 'HA' && client.ha && client.ha > gradeActual) ? client.ha : m[2];
+    const consActual = m[3].toUpperCase();
+    const consNou = (client.cons && client.cons !== consActual) ? client.cons : consActual;
+    const aridNou = m[4];
+    let expNou = m[5] || '';
+    if (m[5] && client.exp && client.exp.size) {
       const expClient = [...client.exp].sort().join('+');
-      const expActual = (m[4].match(EXP_RE) || []).map((e) => e.toUpperCase()).sort().join('+');
+      const expActual = (m[5].match(EXP_RE) || []).map((e) => e.toUpperCase()).sort().join('+');
       if (expClient !== expActual) expNou = expClient;
     }
-    const nova = 'HA-' + haNou + '/' + consNou + '/' + aridNou + '/' + expNou;
+    const nova = tipusText + '-' + haNou + '/' + consNou + '/' + aridNou + (expNou ? '/' + expNou : '');
     text = text.slice(0, m.index) + nova + text.slice(m.index + m[0].length);
   }
   // FIX (2026-09-04): arid 10mm -- corre DESPRES del bloc HA d'aqui dalt (per si ja ha
@@ -191,11 +216,27 @@ for (const r of files) {
   const textClientCru = (r.resum_excel || '') + ' ' + (r.text || '');
   const clientDesig = parseDesignacio(textClientCru);
   const baseDesig = parseDesignacio(concreteLine.resum);
+  const titolDesig = parseDesignacio(c.resum);
 
-  // El sistema de grau/consistencia/exposicio nomes te sentit per a formigo ARMAT (HA):
-  // si el client o la base no en porten designacio, es descarta sencer (com sempre).
+  // FIX (2026-09-07): el sistema de grau/consistencia/exposicio abans nomes es disparava amb
+  // "HA" (formigo armat) -- ara tambe cobreix HM/HL (formigo en massa/neteja), no nomes per
+  // grau/exposicio sino perque aquestes bases sovint tenen UN sol material HM generic sense
+  // consistencia ni arid propis (p.ex. "HORMIGÓN HM - 20", sense "/B/20"): baseDesig.cons i
+  // baseDesig.arid es queden null encara que el TITOL de la partida SI ho digui
+  // ("...HM-20/B/20"). "baseEfectiu" fa servir el material com a font principal (el preu ja
+  // reflecteix exactament aixo) i el titol nomes de reserva quan el material no ho especifica.
+  const baseEfectiu = {
+    ha: baseDesig.ha, tipus: baseDesig.tipus,
+    cons: baseDesig.cons || titolDesig.cons,
+    exp: baseDesig.exp,
+    autocompactable: baseDesig.autocompactable, hidrofug: baseDesig.hidrofug,
+    blanco: baseDesig.blanco, sr: baseDesig.sr, mr: baseDesig.mr
+  };
+  // El sistema de grau/consistencia/exposicio nomes te sentit quan es pot identificar una
+  // designacio HA/HM/HL real, tant al client com a la base: si algun dels dos no en porta,
+  // es descarta sencer (com sempre).
   const potExposicio = clientDesig.ha !== null && baseDesig.ha !== null;
-  const supl = potExposicio ? suplementsAplicables(clientDesig, baseDesig).filter(([sc]) => cat[sc] || con[sc]) : [];
+  const supl = potExposicio ? suplementsAplicables(clientDesig, baseEfectiu).filter(([sc]) => cat[sc] || con[sc]) : [];
   // FIX (2026-09-07): qualsevol diferencia de classe d'exposicio entre el que demana el
   // client i el que diu el TITOL de la partida obliga a corregir titol/Text1, encara que no
   // impliqui cap suplement de cost (ni XC1 ni XC2 son a EXP_GRUP, aixi que
@@ -203,15 +244,22 @@ for (const r of files) {
   // titol, no contra "baseDesig" (que surt del material fill): a la base real la partida 408
   // es titula XC1 pero esta feta amb material XC2, aixi que un client que demanava XC2
   // donava "cap diferencia" i el titol es quedava a XC1 (obra 822.26, murs de contencio).
-  const titolDesig = parseDesignacio(c.resum);
   const expRelabel = clientDesig.ha !== null && titolDesig.ha !== null && clientDesig.exp.size > 0
     && [...clientDesig.exp].sort().join('+') !== [...titolDesig.exp].sort().join('+');
 
   // FIX (2026-09-04): arid 10mm -- a diferencia de dalt, aixo SI s'aplica a formigo en
   // massa (HM/HL), no nomes armat -- per aixo es independent de "potExposicio".
+  // FIX (2026-09-07): fins ara nomes es detectava quan el client ho deia en PROSA lliure
+  // ("arido 10mm"). Molt sovint el client nomes ho indica DINS la propia designacio
+  // estructurada ("HA-25/B/10/XC2", "HA-25/F/10/XC1" -- el 10 es l'arid, tercer tros) sense
+  // repetir mai la paraula "arido"/"arid" enlloc del text -- volArid10() no en trobava cap
+  // rastre i l'arid es quedava tal qual (823.26: murs i cimentacions demanaven arid 10 dins
+  // la seva propia "HA-.../10/..." i el titol final es quedava amb el 20 de la base). Ara
+  // tambe es dispara quan la propia designacio del client (ja parsejada a "clientDesig")
+  // diu arid=10.
   const ARID_CODI = 'MA00.2.4';
   const volArido10 = (cat[ARID_CODI] || con[ARID_CODI])
-    && volArid10(textClientCru) && arid10DeLaBase(concreteLine.resum) !== 10;
+    && (volArid10(textClientCru) || clientDesig.arid === 10) && arid10DeLaBase(concreteLine.resum) !== 10;
   if (volArido10) supl.push([ARID_CODI, "arido 10mm indicat pel client (la base nomes disposa d'arido 12, la mida mes petita)"]);
 
   if (!supl.length && !expRelabel) continue;
