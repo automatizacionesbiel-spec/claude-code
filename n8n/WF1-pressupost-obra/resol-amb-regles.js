@@ -49,11 +49,30 @@ const dicc = $input.all().map((i) => i.json).filter((r) => r && r.clau);
 const diccMap = {};
 for (const r of dicc) diccMap[r.clau] = String(r.codi_base ?? '');
 
+// FIX (2026-09-07): el diccionari nomes guarda clau->codi_base, sense memoria de si en aquell
+// moment el client mesurava l'encofrat per separat o no -- una mateixa clau pot ser correctament
+// COMPOSTA en una obra i correctament SEPARADA en una altra. Sense revalidar-ho, un match apres
+// fa temps es quedava fixat per sempre encara que la propia redaccio d'AQUESTA linia digui
+// clarament el contrari: la IA mai arribava a intervenir-hi (obra 823.26: 8 linies de
+// llosa/pilar/mur que narren "amb muntatge/desmuntatge d'encofrat...formigo..." en una sola
+// frase -- exactament el patro que hauria de triar una partida [COMPOSTA] -- es quedaven amb un
+// codi simple apres d'una obra anterior). Si la propia linia del client menciona ENCOFRAT i
+// FORMIGO alhora pero el codi apres NO es composta, es tracta com "sense resoldre" i es torna a
+// enviar a la IA -- exactament igual que qualsevol partida nova. Vegeu el mateix criteri a
+// 'Consolida' (que es qui decideix el resultat final: cal que ambdos nodes hi estiguin d'acord,
+// sino 'Consolida' tornaria a imposar el valor vell del diccionari per sobre de la resposta nova
+// de la IA).
+const teAmbdosEnUnaLinia = (t) => { const n = norm(t); return /encofr|desencofr/.test(n) && /formig|hormig/.test(n); };
+
 // --- Partides pendents, deduplicades per clau ---
 const pendents = new Map();
 for (const p of partides) {
   if (p.is_nota) continue;
-  if (diccMap[p.clau] !== undefined) continue;
+  const diccCodi = diccMap[p.clau];
+  if (diccCodi !== undefined) {
+    const dictSuspecte = diccCodi && diccCodi !== 'EXCLOSA' && teAmbdosEnUnaLinia(p.resum) && !compostes.has(diccCodi);
+    if (!dictSuspecte) continue;
+  }
   if (!pendents.has(p.clau)) {
     pendents.set(p.clau, { clau: p.clau, ud: p.ud_norm, resum: p.resum, text: String(p.text || '').slice(0, 250), capitol: p.cap_desc || '', encofrat: esEncofratClient(p.resum) });
   }

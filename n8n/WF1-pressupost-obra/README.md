@@ -5,6 +5,106 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 16: stop trusting stale dictionary hits over the composta/separat context
+
+Follow-up to Change 15's "not yet addressed" item. The user pushed back
+(correctly): "didn't we already discuss using composite items when
+appropriate? Why doesn't the AI matching figure it out on its own — is it
+the dictionary, and does that need to change?"
+
+**My Change 15 diagnosis was wrong.** I had claimed this catalog has no
+true `[COMPOSTA]` (concrete+formwork combined) items for losa/pilar/mur.
+That check only looked children up in `Llegeix cataleg`, not
+`Llegeix conceptes` — most composite decompositions reference their
+formwork/concrete children as *conceptes* (materials/labor), not catalog
+items, so the check silently found nothing. Re-checked properly (children
+resolved as `conMap[k] || catMap[k]`, matching what `resol-amb-regles.js`
+and `Consolida` actually do): this catalog has **23** genuine `[COMPOSTA]`
+items, including exactly the families reported broken — `304`
+("FORMACIÓN DE LOSA..."), `601` ("FORMACIÓN PILARES..."), `404`/`404.`/
+`406`/`520`/`521` ("FORMACIÓN MURO...").
+
+**Root cause, confirmed against execution #125:** every one of the 8
+reported-wrong rows (llosa: 12, 13, 30, 31, 32; pilar: 17, 36; mur: 18) had
+`confianca: DICCIONARI`, `origen: DICCIONARI`, `motiu: "Match apres en
+obres anteriors"`. `resol-amb-regles.js` skips AI matching *unconditionally*
+for any client `clau` that already has a dictionary entry, however old or
+however different the context that produced it. The dictionary key does
+not encode "did the client measure formwork separately in that obra" — so
+a `clau` correctly learned as encofrat-only (`311`) or concrete-only
+(`604`/`408`) in some earlier obra stays wrong forever afterwards, even
+when *this* obra's own row narrates both scopes in one sentence ("Llosa de
+formigó armat...amb muntatge i desmuntatge d'encofrat...formigó..."). The
+AI's `[COMPOSTA]` logic in the matching prompt was never broken — it just
+never got a chance to run on these rows.
+
+### Fix
+
+Added the same revalidation check to both **`resol-amb-regles.js`** and
+**`consolida.js`** (the two places that independently re-derive the
+dictionary lookup — see below for why both needed it):
+
+```js
+const teAmbdosEnUnaLinia = (t) => {
+  const n = norm(t);
+  return /encofr|desencofr/.test(n) && /formig|hormig/.test(n);
+};
+```
+
+If a client row's own text mentions both encofrat and formigó/hormigó
+together, but the dictionary-learned `codi_base` for its `clau` is **not**
+a `[COMPOSTA]` item, the dictionary hit is treated as unresolved:
+
+- `resol-amb-regles.js` sends it to AI matching like any fresh row
+  (previously it was skipped outright whenever *any* dictionary entry
+  existed for the clau).
+- `consolida.js` — which is the node that actually decides the final
+  `codi_base` — independently re-derives the same dictionary lookup and,
+  until now, *always* gave it priority over any AI answer. Fixing only
+  `resol-amb-regles.js` would have been silently overridden here. Now, when
+  the same mismatch is detected and the AI answered, the AI's match wins
+  (`origen: 'IA'`); if the AI didn't answer for some reason, the old
+  dictionary value is kept (a row is never left without a `codi_base`) but
+  downgraded to `confianca: 'BAIXA'` with a `SOSPITOS` note in `motiu` so a
+  technician catches it on the review sheet instead of it passing silently.
+
+Rows where the dictionary hit is still valid — a pure encofrat-only line,
+a pure formigó-only line, or a clau already correctly learned as
+composta — are completely unaffected and still skip AI matching as before,
+so the fix doesn't add cost/latency outside the narrow mismatch case.
+
+**Second bug uncovered while testing this:** `Consolida`'s `ABSORBIDA`
+suppression (meant to drop a client's *separate*, formwork-only line when
+a composta item on another line already covers that formwork) checked only
+`esEncofratClient(p.resum)` — true for *any* row that merely mentions
+"encofrat" anywhere, including a full row that narrates both scopes and
+*is itself* the composta match. Once such a row correctly got a composta
+`codi_base` from the fix above, this would have marked it `ABSORBIDA` and
+dropped it from the BC3 entirely — worse than the original bug (which at
+least billed something, with the wrong code). Narrowed the condition to
+`esEncofratClient(p.resum) && !teAmbdosEnUnaLinia(p.resum)`, so it only
+fires for a genuinely formwork-only line.
+
+### Validation
+
+Standalone test harness (`test_dicc_revalidacio.js`, run via `node`,
+`eval`-loading both files against a mocked `$`/`$input`) covering: the 3
+real obra 823.26 families (llosa/pilar/mur, each verified to route to AI
+and land on the correct composta code with real catalog units and
+decompositions from execution #125's `Llegeix cataleg`/`Llegeix
+conceptes`), 2 regression cases where the client genuinely separates
+encofrat/formigó into different rows (must stay on the dictionary,
+unaffected), 1 case of a clau already correctly learned as composta (must
+stay on the dictionary, not bounce to AI needlessly), 1 fresh clau with no
+dictionary entry (must go to AI exactly as before), and 1 case simulating
+the AI failing to answer a revalidated clau (must fall back to the old
+dictionary value with a `BAIXA`/`SOSPITOS` flag, never a blank
+`codi_base`). All passed before pushing.
+
+`consolida.js` was not previously mirrored in this repo (it's a Code node
+that was never touched before this change); added it here alongside
+`resol-amb-regles.js`.
+
 ## Change 15: obra 823.26 review — arid-10 structured detection + HM/HL support
 
 Prompted by the user reporting multiple failures in obra 823.26's generated
@@ -68,21 +168,13 @@ All changes validated with a standalone test script covering 4 real cases
 from obra 823.26's execution #125 plus 8 regression cases from earlier
 validated scenarios (12/12 passed) before pushing.
 
-**Not yet addressed (architecturally deferred, flagged to the user):** the
-losa-uses-formwork-code-instead-of-concrete-code issue and the
-pilar/mur-missing-separate-formwork-billing issue. Root cause: this
-catalog has no true `[COMPOSTA]` (single item combining concrete +
-formwork) entries for losa/pilar/mur — concrete and formwork are always
-two separate simple catalog items (310/311 for losa, 604/602 for pilar,
-408/401 for mur) — yet the client's Excel describes both scopes in **one**
-row per element. The system can only assign one `codi_base` per client
-row, so today it either bills only formwork (losa, dictionary entry
-pointing to 311 instead of 310) or only concrete with formwork left at
-zero quantity (pilar/mur). This needs a new mechanism (proposed: mirror
-`detecta-suplements-alcada.js`'s pattern to derive an independent formwork
-quantity from the client's stated ratio, e.g. "amb una quantia de 14
-m2/m3", applied to the row's own matched concrete quantity) and has not
-been implemented.
+**Superseded by Change 16 below.** The diagnosis in this section turned out
+to be wrong — this catalog *does* have genuine `[COMPOSTA]` items for
+losa/pilar/mur (`304`, `601`, `404` and others); my check here had only
+looked up decomposition children in `Llegeix cataleg` and missed that most
+of them live in `Llegeix conceptes`. The real root cause and the actual
+fix (revalidating stale dictionary hits instead of building a new
+formwork-quantity mechanism) are in Change 16.
 
 ## Change 14: fixed the root cause of a bad learned dictionary match
 
