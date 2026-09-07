@@ -70,7 +70,11 @@ for (const r of files) {
   const c = cat[String(r.codi_base)];
   if (!c) continue;
 
-  const mallat = extreuMallat((r.resum_excel || '') + ' ' + (r.text || ''));
+  // FIX (2026-09-04): prioritat al mallat que ja ha extret "Enriquiment IA" -- enten molt
+  // millor el llenguatge natural del client que cap regex. El regex propi nomes queda com a
+  // reserva (si aquesta execucio no ha passat per la IA, o no ha trobat res per aquesta fila).
+  const mallatIa = (r.mallat_ia && r.mallat_ia.a > 0 && r.mallat_ia.b > 0 && r.mallat_ia.d > 0) ? r.mallat_ia : null;
+  const mallat = mallatIa || extreuMallat((r.resum_excel || '') + ' ' + (r.text || ''));
   if (!mallat) continue;
 
   const material = trobaMaterial(mallat.a, mallat.b, mallat.d);

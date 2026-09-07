@@ -16,7 +16,7 @@ function parsePdfGroup(rows, override) {
   };
   const reCodi = /^(\S+)[ \t]+(.*)$/;
   const reCodiFi = /^(\S.*[^\s\d.])(\d[A-Za-z0-9.\-]*)$/;
-  const UNITATS = ['m', 'm2', 'm3', 'ml', 'm\u00B2', 'm\u00B3', 'u', 'ut', 'ud', 'uds', 'kg', 'tn', 'h', 'h.', 'pa', 'p.a', 'mes', 'dia', '%'];
+  const UNITATS = ['m', 'm2', 'm3', 'ml', 'm²', 'm³', 'u', 'ut', 'ud', 'uds', 'kg', 'tn', 'h', 'h.', 'pa', 'p.a', 'mes', 'dia', '%'];
   const dotDecimal = override && override.decimal === 'dot';
   const reNumSol = dotDecimal ? /^-?[\d,]*\d\.\d+$/ : /^-?[\d.]*\d,\d+$/;
   const reNum = dotDecimal ? /-?[\d,]*\d\.\d+|\b\d+\b/g : /-?[\d.]*\d,\d+|\b\d+\b/g;
@@ -24,10 +24,10 @@ function parsePdfGroup(rows, override) {
     ? (s) => parseFloat(String(s).replace(/,/g, '')) || 0
     : (s) => parseFloat(String(s).replace(/\./g, '').replace(',', '.')) || 0;
   const rePeu = /^(--\s*\d+\s+of\s+\d+\s*--|\d{1,4}[ \t]+\d{1,2}\s+\S+\s+\d{4}|\d{1,2}\s+\S+\s+\d{4}([ \t]+\d+)?)$/;
-  const reCapcalera = /^(codi|codigo|c\u00f3digo)[ \t]+(resum|resumen)/i;
+  const reCapcalera = /^(codi|codigo|código)[ \t]+(resum|resumen)/i;
   // FIX (2026-09-04): alguns informes d'amidaments (format TCQ/ITEC, execucio 117) mai
   // deixen el total d'una partida com a linia NOMES amb el numero (reNumSol) -- sempre el
-  // precedeixen d'un literal "Total <ud> ......:" (p.ex. "Total m\u00b3 ......: 374,387"). Sense
+  // precedeixen d'un literal "Total <ud> ......:" (p.ex. "Total m³ ......: 374,387"). Sense
   // aquest patro, aquesta linia queia al fallback reCodiFi i es confonia amb un codi nou
   // fals (el "387" final, per exemple), deixant la partida real sense total ni linies --
   // esCap sortia true per TOTES les partides (cap "partida" real detectada), 0 items i tot
@@ -55,7 +55,7 @@ function parsePdfGroup(rows, override) {
     if (/^[\d.,]/.test(rest)) return false;
     const p = rest.split(/[ \t]+/)[0];
     if (UNITATS.indexOf(p.toLowerCase()) >= 0 && rest.length > p.length + 1) return true;
-    return /^[A-Z\u00C0-\u00D6\u00D8-\u00DE]/.test(rest);
+    return /^[A-ZÀ-ÖØ-Þ]/.test(rest);
   };
 
   const nodes = [];
@@ -90,7 +90,7 @@ function parsePdfGroup(rows, override) {
         const p0 = rest.split(/[ \t]+/)[0];
         const teUd = UNITATS.indexOf(p0.toLowerCase()) >= 0 && rest.length > p0.length + 1;
         const desc = teUd ? rest.slice(p0.length).trim() : rest;
-        const descOk = teUd ? /^[A-Z\u00C0-\u00D6\u00D8-\u00DE]/.test(desc) : true;
+        const descOk = teUd ? /^[A-ZÀ-ÖØ-Þ]/.test(desc) : true;
         if (descOk) {
           cur = { codi: mc[1], ud: teUd ? p0 : '', resum: desc, text: '', linies: [], total: null };
           nodes.push(cur);
@@ -143,7 +143,7 @@ function parsePdfGroup(rows, override) {
 }
 
 function parseExcelGroup(rows, aiConfig) {
-  const norm = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
   const toArray = (j) => {
     if (Array.isArray(j)) return j;
     if (j && Array.isArray(j.row)) return j.row;
@@ -297,7 +297,7 @@ function parseExcelGroup(rows, aiConfig) {
   return { pending: false, parts: out };
 }
 
-const norm = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 const normText = (s) => norm(s).replace(/\s+/g, ' ');
 
 // Empremta tecnica (2026-08-26): extreu fets objectius del text (element, formigo,
@@ -337,7 +337,7 @@ const empremtaTecnica = (text) => {
   ].filter(Boolean).join('|');
 };
 const UDMAP = { M: 'ML', ML: 'ML', U: 'UD', UT: 'UD', UD: 'UD', 'M.': 'ML', PA: 'PA' };
-const normUd = (u) => { const x = String(u ?? '').trim().toUpperCase().replace(/\u00B2/g, '2').replace(/\u00B3/g, '3').replace(/\.$/, ''); return UDMAP[x] || x; };
+const normUd = (u) => { const x = String(u ?? '').trim().toUpperCase().replace(/²/g, '2').replace(/³/g, '3').replace(/\.$/, ''); return UDMAP[x] || x; };
 
 const form = $('Nova obra').first().json;
 const obra = form['Nom obra'];
@@ -445,3 +445,4 @@ const stats = { n_partides: n, pct_quantitat_0: Math.round(pctQ0 * 1000) / 10, p
 for (const p of parts) p._stats = stats;
 
 return parts.map((p) => ({ json: p }));
+

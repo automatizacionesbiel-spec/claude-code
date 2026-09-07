@@ -319,3 +319,4 @@ if (r.pending) {
   return [{ json: { _pending: true, _grup: gi, _tipus: r.tipus, _mostra: r.mostra, _files: rows } }];
 }
 return r.parts.map((p) => { p.font = esPdf ? 'PDF' : 'EXCEL'; return { json: { _pending: false, _grup: gi, ...p } }; });
+

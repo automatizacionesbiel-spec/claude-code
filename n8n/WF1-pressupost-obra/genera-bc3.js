@@ -114,6 +114,16 @@ try {
     encofratPerOrdre[Number(s.ordre)] = s;
   }
 } catch (e) {}
+// Gruix real (G=/E=) indicat pel client per a lloses/forjats i soleres/capes -- mateix
+// patro que encofrat/acer/mallat: cada fila detecta que cal canviar per al seu "ordre".
+const espessorPerOrdre = {};
+try {
+  for (const it of $('Detecta espessor').all()) {
+    const s = it.json || {};
+    if (s.ordre === undefined || s.ordre === '') continue;
+    espessorPerOrdre[Number(s.ordre)] = s;
+  }
+} catch (e) {}
 
 const entries = {};
 const orderKeys = [];
@@ -174,8 +184,18 @@ for (const r of files) {
     let mallatTextExtra = null;
     let mallatMida = null;
     let mallatCodisNous = null;
+    let rendimentOverrides = [];
     const encofratQtyClient = (encofrat && String(encofrat.codi_base) === final
       && encofrat.qty_client !== undefined && encofrat.qty_client !== null) ? encofrat.qty_client : null;
+    const espessor = espessorPerOrdre[Number(r.ordre)];
+    if (espessor && String(espessor.codi_base) === final && espessor.formigo_codi
+      && (cat[espessor.formigo_codi] || con[espessor.formigo_codi])) {
+      // FIX (2026-09-04): canvi d'espessor -- NO s'insereix cap triplet nou, es SOBRESCRIU
+      // directament el rendiment del fill de formigo ja existent (per aixo va a part de
+      // injAbans/injSota, que nomes saben sumar-hi o afegir-ne un de nou).
+      rendimentOverrides.push({ codi: espessor.formigo_codi, rendimentNou: espessor.rendiment_nou });
+      motius.push('Incluye ' + espessor.motiu + '.');
+    }
     if (supl && String(supl.codi_base) === final && Array.isArray(supl.suplement_codis)
       && supl.suplement_codis.length && supl.suplement_codis.every((sc) => cat[sc] || con[sc])) {
       const rend = Number(supl.suplement_rendiment) || 0;
@@ -205,8 +225,9 @@ for (const r of files) {
       acerTextExtra = acer.text_extra || null;
       acerQtyClient = (acer.qty_client !== undefined && acer.qty_client !== null) ? acer.qty_client : null;
     }
-    const injOk = injAbans.length > 0 || injSota.length > 0;
-    const injKey = injOk ? [...injAbans, ...injSota].map((t) => t.codi + '@' + fmt(t.rendiment)).sort().join('+') : '';
+    const injOk = injAbans.length > 0 || injSota.length > 0 || rendimentOverrides.length > 0;
+    const injKey = injOk ? [...injAbans, ...injSota].map((t) => t.codi + '@' + fmt(t.rendiment))
+      .concat(rendimentOverrides.map((o) => 'OVR:' + o.codi + '@' + fmt(o.rendimentNou))).sort().join('+') : '';
 
     // Suplements fixos (refino/ancoratges/galga/porex/juntes/catas/encofrat i vertit que
     // falta, sempre a quantitat 0): el mateix codi de cataleg pot caldre a mes d'un
@@ -314,6 +335,12 @@ for (const r of files) {
           const posicio = idxGG === -1 ? triples.length : idxGG + 1;
           triples.splice(posicio, 0, [t.codi, '1', fmt(t.rendiment)]);
         }
+        // Canvi d'espessor: SOBRESCRIU el rendiment del fill de formigo ja existent (mai
+        // insereix res nou -- el fill sempre hi es, ja el porta la base).
+        for (const ov of rendimentOverrides) {
+          const idx = troba(ov.codi);
+          if (idx !== -1) triples[idx][2] = fmt(ov.rendimentNou);
+        }
         desc = triples.map(([kk, ff, rr]) => kk + BS + ff + BS + rr + BS).join('');
 
         let sumFills = 0;
@@ -392,6 +419,19 @@ for (const r of files) {
         } else {
           text = text.slice(0, mEncofrat.index) + text.slice(mEncofrat.index + mEncofrat[0].length);
         }
+      }
+
+      // FIX (2026-09-04): quan el client demana un gruix (G=/E=) diferent del que la base
+      // ja declara, se substitueix NOMES el numero -- tant al titol com, si hi apareix, a la
+      // propia descripcio contractual (p.ex. "...con un espesor medio de 10 cm." -> "...15
+      // cm."). Mai es reescriu la resta de la frase. S'aplica sempre, independentment de si
+      // la partida te tambe altres suplements (formigo/mallat/acer).
+      if (espessor) {
+        const gruixStr = String(espessor.gruix_client).replace('.', ',');
+        const mTitolG = resum.match(/([GE]\s*=\s*)(\d+(?:[.,]\d+)?)(\s*CM(?:S)?\b)/i);
+        if (mTitolG) resum = resum.slice(0, mTitolG.index) + mTitolG[1] + gruixStr + mTitolG[3] + resum.slice(mTitolG.index + mTitolG[0].length);
+        const mTextG = text.match(/((?:espesor|espessor|grosor|gruix)(?:\s+\S+){0,2}?\s+de\s+)(\d+(?:[.,]\d+)?)(\s*cm\b)/i);
+        if (mTextG) text = text.slice(0, mTextG.index) + mTextG[1] + gruixStr + mTextG[3] + text.slice(mTextG.index + mTextG[0].length);
       }
 
       entries[key] = { code, ud: String(c.ud || ''), resum, text, preu, desc, capKey, qty: 0, lines: [] };

@@ -31,3 +31,4 @@ for (const r of files) {
   out.push({ json: { ordre: r.ordre, codi_base: r.codi_base, qty_client: qty } });
 }
 return out;
+

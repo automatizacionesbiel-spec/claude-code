@@ -7,11 +7,16 @@
 // estructurales) existeix al cataleg carregat (avui, OBRAS COMPLETAS; MO+MAT no en te i
 // el mecanisme no fa res).
 const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+const BS = String.fromCharCode(92);
+const tripletsOf = (s) => { const t = String(s || '').split(BS); const o = []; for (let i = 0; i < t.length - 1; i += 3) { const c = (t[i] || '').trim(); if (c) o.push([c, t[i + 1], t[i + 2]]); } return o; };
 
 const files = $('Assigna capitols').all().map((i) => i.json);
 const cataleg = $('Llegeix cataleg').all().map((i) => i.json).filter((r) => r && r.codi);
+const conceptes = $('Llegeix conceptes').all().map((i) => i.json).filter((r) => r && r.codi);
 const cat = {};
 for (const c of cataleg) cat[String(c.codi)] = c;
+const con = {};
+for (const c of conceptes) con[String(c.codi)] = c;
 
 const CODI_ACER = cataleg.find((c) => /acero corrugado.*elementos estructurales/.test(norm(c.resum)));
 
@@ -56,18 +61,35 @@ function extreuQuantitatAcer(text) {
 // propi de muros/pilars/forjats), la familia d'una linia INDEPENDENT d'acer nomes es pot
 // saber pel text del CLIENT en aquella fila -- a diferencia de la partida composta, la
 // seva familia si ve del capitol de la base (igual que a "Detecta suplements alcada").
-const FAMILIES = [
-  { keyword: /pilar/ },
-  { keyword: /muro/ },
-  { keyword: /forjado/ }
+// FIX (2026-09-04, ronda 2): amb dades reals (829.26) aquest mecanisme fallava en dos punts:
+// 1) La llista nomes tenia pilar/muro/forjado -- li faltaven losa (sinonim de forjado als
+//    excels dels clients), viga i zanja/pou/zapata/riostra (cimentacio). Amb el 829.26, les
+//    files independents d'acer de "LOSAS ESTRUCTURA", "LOSAS INCLINADAS", "VIGAS" i "ZANJAS
+//    Y POZOS" no coincidien amb cap familia i el +2 per defecte es seguia afegint igualment
+//    a 310.S1/310.S2/70003.S1/101.S1/103.S1.
+// 2) Fins i tot "muro" (que si hi era) fallava sovint: es buscava la paraula clau nomes al
+//    text EN CRU de la fila d'acer, pero aquesta fila pot no repetir-la (ve d'un encapçalament
+//    de seccio al excel del client, no de la propia descripcio). "Enriquiment IA" ja assigna
+//    una etiqueta curta fiable per distingir aquestes files (es exactament el que apareix com
+//    a comentari de mesura al BC3: "MURO", "PILARES", "LOSAS ESTRUCTURA"...) -- ara es dona
+//    prioritat a aquesta etiqueta abans de recorrer al text en cru.
+const FAMILY_MAP = [
+  { tag: 'PILAR', re: /pilar/ },
+  { tag: 'MURO', re: /muro|pantalla/ },
+  { tag: 'FORJADO', re: /forjado|losa/ },
+  { tag: 'VIGA', re: /viga|jacena/ },
+  { tag: 'CIMENTACION', re: /cimentacio|fonament|zanja|poz[oa]s?|zapata|riostra|solera|encepado|enceps/ }
 ];
+const familiaDe = (text) => { const t = norm(text); const f = FAMILY_MAP.find((x) => x.re.test(t)); return f ? f.tag : null; };
+
 const familiesAmbAcerIndependent = new Set();
 if (CODI_ACER) {
   for (const r of files) {
     if (!r.codi_base || r.confianca === 'ABSORBIDA') continue;
     if (String(r.codi_base) !== String(CODI_ACER.codi)) continue;
-    const textClient = norm((r.resum_excel || '') + ' ' + (r.text || ''));
-    for (const fam of FAMILIES) if (fam.keyword.test(textClient)) familiesAmbAcerIndependent.add(fam.keyword.source);
+    const font = r.etiqueta_curta || ((r.resum_excel || '') + ' ' + (r.text || ''));
+    const fam = familiaDe(font);
+    if (fam) familiesAmbAcerIndependent.add(fam);
   }
 }
 
@@ -79,22 +101,40 @@ if (CODI_ACER) {
     if (!c) continue;
 
     const resumNorm = norm(c.resum);
-    const esComposta = r.es_composta === 'x';
     const esVertitOHormigo = /vertido|hormigon/.test(resumNorm) && !/encofr|suplemento/.test(resumNorm);
-    if (!esComposta && !esVertitOHormigo) continue;
-
-    if (familiesAmbAcerIndependent.size) {
-      const capBase = norm(c.capitol_desc || c.capitol || '');
-      const familiaActual = FAMILIES.find((f) => f.keyword.test(capBase));
-      if (familiaActual && familiesAmbAcerIndependent.has(familiaActual.keyword.source)) continue;
-    }
+    // FIX (2026-09-04): "es_composta" nomes es cert quan la base te ALHORA un fill
+    // d'encofrat I un de formigo -- un "forjado colaborante" (p.ex. codi "307") fa servir
+    // xapa col·laborant com a encofrat perdut (el seu fill no diu "encofrado" enlloc), aixi
+    // que mai queda marcat composta, i el seu titol tampoc diu "vertido"/"hormigon" (diu
+    // "FORMACION DE FDO. COLABORANTE"). Resultat real (829.26): l'acer del client mai
+    // s'injectava en aquestes partides, i el "Q.estimada=" que es veia al text nomes era
+    // el valor per defecte de la base, no el que realment deia el client. Ara nomes cal que
+    // la base tingui UN fill de formigo (amb independencia de si tambe en te un d'encofrat).
+    const teFormigoFill = tripletsOf(c.descomposicio).some(([kk]) => { const s = con[kk] || cat[kk]; return s && /vertido|hormig/i.test(norm(s.resum)); });
+    if (!esVertitOHormigo && !teFormigoFill) continue;
 
     const textClient = norm((r.resum_excel || '') + ' ' + (r.text || ''));
+    // FIX (2026-09-04): prioritat a la quantitat que ja ha extret "Enriquiment IA" -- enten
+    // molt millor el llenguatge natural del client (ordre de les paraules, catala/castella
+    // barrejat, frases llargues amb la dosificacio de ciment pel mig...) que cap regex
+    // escrita a ma. El regex propi nomes queda com a reserva (si aquesta execucio no ha
+    // passat per la IA -- lots buits -- o no ha trobat cap quantitat per aquesta fila).
+    const qtyClientIa = Number(r.acer_kg_ia);
+    const qtyClient = (qtyClientIa > 0) ? qtyClientIa : extreuQuantitatAcer(textClient);
+    const teQtyClient = qtyClient !== null && qtyClient > 0;
+
+    // FIX (2026-09-04, ronda 3): la supressio per familia nomes ha d'aplicar-se a l'extra
+    // AUTOMATIC (quan aquesta fila concreta no diu cap quantitat propia) -- si el client SI
+    // indica una quantitat real al text d'AQUESTA fila (com el "acero corrugado 1,5 kg/m2"
+    // del forjado colaborante 307 al 829.26), es una dada directa i mai s'ha de descartar
+    // nomes perque una altra fila del mateix capitol ja porti el seu acer a part.
+    if (familiesAmbAcerIndependent.size && !teQtyClient) {
+      const familiaActual = familiaDe(c.capitol_desc || c.capitol || '');
+      if (familiaActual && familiesAmbAcerIndependent.has(familiaActual)) continue;
+    }
+
     const esLlosaEscala = /losa/.test(textClient) && /escalera/.test(textClient);
     const extra = esLlosaEscala ? 5 : 2;
-
-    const qtyClient = extreuQuantitatAcer(textClient);
-    const teQtyClient = qtyClient !== null && qtyClient > 0;
     const total = extra + (teQtyClient ? qtyClient : 0);
     const motiu = teQtyClient ? (qtyClient + 'kg indicats pel client + ' + extra + 'kg extra') : ('extra ' + extra + 'kg/ud');
     const triples = [{ codi: String(CODI_ACER.codi), rendiment: total }];
@@ -114,3 +154,4 @@ if (CODI_ACER) {
   }
 }
 return out;
+
