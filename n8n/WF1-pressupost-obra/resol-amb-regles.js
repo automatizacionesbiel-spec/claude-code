@@ -35,6 +35,13 @@ for (const c of cataleg) {
 // --- DETERMINISTA: on mesura el client l'encofrat per separat? ---
 // Aixo decideix si convenen les partides de FORMACION (compostes) o encofrat i vertido solts.
 const esEncofratClient = (t) => /encofr|desencofr/.test(norm(t));
+// FIX (2026-09-07, Change 18): senyal determinista addicional -- la propia linia esmenta
+// ENCOFRAT i FORMIGO/HORMIGO alhora (provat contra execucio real #127, obra 823.26: la IA,
+// deixada nomes amb la SUGGERIMENT DEL DICCIONARI en prosa, va interpretar "amb una quantia
+// de 14 m2/m3" com si fos nomes informatiu i va triar el codi simple igualment -- exactament
+// el patro que ja s'havia confirmat erroni). Es passa com a booleà explícit
+// ('narra_encofrat_i_formigo') en lloc de nomes en prosa, perque la IA no l'hagi de deduir.
+const teAmbdosEnUnaLinia = (t) => { const n = norm(t); return /encofr|desencofr/.test(n) && /formig|hormig/.test(n); };
 const encofratsClient = [];
 const capsAmbEncofrat = new Set();
 for (const p of partides) {
@@ -71,6 +78,7 @@ for (const p of partides) {
     pendents.set(p.clau, {
       clau: p.clau, ud: p.ud_norm, resum: p.resum, text: String(p.text || '').slice(0, 250),
       capitol: p.cap_desc || '', encofrat: esEncofratClient(p.resum),
+      ambdos: teAmbdosEnUnaLinia(p.resum),
       dicc_suggerit: diccMap[p.clau] || null
     });
   }
@@ -136,6 +144,7 @@ const REGLES = [
   "- Si en aquell element el client ja dona una linia d'encofrat a part, NO triis una [COMPOSTA]: triaries dues vegades el mateix encofrat. Tria la partida d'operacio solta (nomes el formigo, o nomes l'encofrat, segons la linia que estiguis emparellant).",
   "- Si el client nomes dona l'element sencer i no mesura cap encofrat per a aquell element, tria la [COMPOSTA].",
   "- Una linia d'encofrat del client sempre ha d'anar a una partida d'encofrat, mai a una composta.",
+  "- REGLA OBLIGATORIA quan 'narra_encofrat_i_formigo' es true: aquesta linia descriu TOT l'element (encofrat I formigo) EN UNA SOLA FRASE -- tria SEMPRE una candidata [COMPOSTA] de la familia geometrica correcta, encara que la linia esmenti una quantia d'encofrat en m2/m3 o m2/m2 (\"amb una quantia de 14 m2/m3\", \"amb una quantia d'encofrat 8 m2/m3\"): aquesta quantia es NOMES INFORMATIVA (indica quant encofrat porta cada m3/m2 de l'element), NO vol dir que el client mesuri l'encofrat en una linia diferent. No et desviïs d'aquesta regla per cap altre raonament -- nomes fes marxa enrere si NO existeix cap candidata [COMPOSTA] remotament versemblant per a aquell element (llavors tria la millor operacio solta i explica per que a 'motiu').",
   '',
   "SUGGERIMENT DEL DICCIONARI (camp 'suggerit_diccionari' de cada partida):",
   "- Quan no es null, es el codi que es va triar per a aquesta MATEIXA clau tecnica (element, formigo, unitat...) en una obra anterior.",
@@ -222,7 +231,7 @@ for (const grup of Object.keys(aResoldre).sort()) {
           '. Nomes pots triar d\'aquesta llista - format: codi | unitat | resum\n' + candStr,
         messages: [{ role: 'user', content:
           'PARTIDES DEL CLIENT. Respon un match per a cada id:\n' +
-          JSON.stringify(mapa.map((m, ix) => ({ id: m.id, capitol_client: lot[ix].capitol, ud: lot[ix].ud, es_linia_encofrat: lot[ix].encofrat, resum: lot[ix].resum, text: lot[ix].text, suggerit_diccionari: lot[ix].dicc_suggerit }))) +
+          JSON.stringify(mapa.map((m, ix) => ({ id: m.id, capitol_client: lot[ix].capitol, ud: lot[ix].ud, es_linia_encofrat: lot[ix].encofrat, narra_encofrat_i_formigo: lot[ix].ambdos, resum: lot[ix].resum, text: lot[ix].text, suggerit_diccionari: lot[ix].dicc_suggerit }))) +
           blocEncofrats }],
         output_config: { format: { type: 'json_schema', schema: SCHEMA } }
       }

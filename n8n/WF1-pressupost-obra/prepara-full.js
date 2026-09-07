@@ -17,36 +17,35 @@ const necessitaRevisio = (r) => {
   return false;
 };
 
+// FIX (2026-09-07, Change 18): el full tenia 23 columnes, moltes nomes d'us intern
+// (origen, coincideix_diccionari, capitol_origen, codi_excel...) que no ajuden al tecnic a
+// decidir res. Es redueix a les 14 que realment calen per revisar una fila i actuar-hi,
+// ordenades d'esquerra a dreta seguint el flux real de treball: primer saber si cal mirar-la
+// (REVISAR), despres el context per jutjar-la, i al final les 3 columnes on s'actua.
+// 'flags' (UNITAT_SOSPITOSA, etc.) ja no es una columna a part: es plega dins 'motiu' quan
+// n'hi ha, perque el motiu de dubte quedi tot junt en un sol lloc.
 return files
   .slice()
   .sort((a, b) => (Number(a.capitol_ordre) - Number(b.capitol_ordre)) || (Number(a.ordre) - Number(b.ordre)))
   .map((r) => {
     const revisio = necessitaRevisio(r);
+    const motiu = [r.motiu || '', r.flags || ''].filter(Boolean).join(' | ');
     return { json: {
+      REVISAR: revisio ? 'x' : '',
       ordre: r.ordre,
-      confianca: r.confianca,
-      revisio_necessaria: revisio ? 'x' : '',
-      ud: r.ud,
-      quantitat: num(r.quantitat),
       resum_excel: r.resum_excel,
       codi_base: r.codi_base,
       resum_base: r.resum_base,
+      discrepancia: r.discrepancia || '',
+      motiu,
+      confianca: r.confianca,
+      ud: r.ud,
+      quantitat: num(r.quantitat),
+      import: num(r.import),
       // Pre-marcada com a aprovada quan no cal revisio: el tecnic nomes ha d'actuar sobre
-      // les files amb 'revisio_necessaria' = x. Segueix sent editable com sempre.
+      // les files amb REVISAR = x. Segueix sent editable com sempre.
       OK: revisio ? '' : 'x',
       CODI_CORRECTE: '',
-      EXCLOSA: '',
-      discrepancia: r.discrepancia || '',
-      preu: num(r.preu),
-      import: num(r.import),
-      motiu: r.motiu || '',
-      capitol_desti: r.capitol_desti,
-      origen: r.origen,
-      coincideix_diccionari: r.coincideix_diccionari || '',
-      flags: r.flags || '',
-      capitol_client: r.capitol_client || '',
-      codi_excel: r.codi_excel || '',
-      es_composta: r.es_composta || '',
-      capitol_origen: r.capitol_origen || ''
+      EXCLOSA: ''
     } };
   });

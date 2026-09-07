@@ -5,6 +5,103 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 18: fix a real Change-17 regression, strengthen the composta rule, simplify the sheet
+
+The user re-ran obra 823.26 after Change 17 and reported the review
+email still showed "Encofrats absorbits: 0" and looked wrong ("Del
+diccionari: 0", "Sense match: 18" out of 36 lines), suspecting the
+composta detection was still failing and that a code-only approach can't
+keep up with how different every client's Excel is — asked to look into a
+smarter layer, make the review step non-blocking, and simplify the sheet.
+
+### Investigation: pulled the real, currently-waiting execution (#127)
+
+**The "0 absorbits" number was a red herring, but for the wrong reason.**
+`ABSORBIDA` only fires for a standalone encofrat-only line — none of
+823.26's llosa/pilar/mur rows are that (they narrate the whole element in
+one sentence), so 0 was never going to be right or wrong on its own; it
+doesn't mean the composta routing worked or failed.
+
+**What was actually broken, found by reading `Matching Claude`'s real
+response for this execution:** the AI, now free to override the
+dictionary per Change 17, was given the composta/separat rule only in
+prose plus the `suggerit_diccionari` hint — and for every llosa/pilar/mur
+row it reasoned that "amb una quantia de 14 m2/m3" (etc.) was merely
+*informational* and kept the non-composta codes anyway (motiu: "Text
+esmenta encofrat com a ràtio, mesura és formigó pilar"). One mur row even
+landed on `504` ("MUROS PANTALLAS", a diaphragm-wall variant) instead of
+`408`/`404` (regular wall) — a second, independent mistake. So Change 17's
+mechanism (dictionary as hint, AI free to override) worked exactly as
+built; the AI's own judgment call on this specific ambiguity was simply
+wrong, even with the composta/separat guidance already in the prompt.
+
+**Also found, unrelated to the above:** `Envia revisio`'s email HTML had
+a hardcoded `i.json.origen === 'DICCIONARI'` check for "Del diccionari
+(ja apreses)" — Change 17 renamed that origen value, so this line has
+read 0 on every run since. A real regression from Change 17, introduced
+by not tracing every consumer of `origen`'s string values before renaming
+them.
+
+### Fixes
+
+**`resol-amb-regles.js`** — added a new deterministic per-item boolean,
+`narra_encofrat_i_formigo` (same test as the existing `teAmbdosEnUnaLinia`
+helper), sent explicitly in the request payload instead of leaving the
+AI to infer it from prose. Added a forceful REGLES rule naming the exact
+failure mode: when true, always pick a `[COMPOSTA]` candidate of the
+right geometric family — a stated "quantia" ratio (m2/m3, m2/m2) is
+informational, not evidence of a separate line — only falling back to a
+loose item when no composta candidate is remotely plausible. **This can
+only be confirmed by another real run** — a unit test can verify the
+field and prompt text are wired correctly (and one does), but not whether
+the AI's actual judgment changes; that needs a live re-run, which hasn't
+happened yet as of this push.
+
+**`Envia revisio`** (email) — fixed the stale `origen === 'DICCIONARI'`
+check (replaced with `IA_CONFIRMAT`/`IA_CANVIAT`, matching Change 17's
+vocabulary) and made "needs review" the headline number, read directly
+from `Prepara full`'s own `REVISAR` count so the email and the sheet can
+never disagree. Also surfaces the new "corrected vs. dictionary" count
+prominently, since that's exactly the signal worth double-checking.
+*(First push of this used JSON-pointer path `/parameters/html` instead of
+`/html` — inconsistent with the `/jsCode` pattern used for the Code
+nodes — which silently no-op'd; caught during byte-for-byte verification
+and redone with the correct path.)*
+
+**`prepara-full.js`** (the review sheet) — cut from 23 columns to 14,
+dropping fields that are internal bookkeeping and not something a
+technician acts on (`origen`, `coincideix_diccionari`, `capitol_desti`,
+`capitol_origen`, `codi_excel`, `es_composta`, `preu`, `capitol_client`).
+`flags` (e.g. `UNITAT_SOSPITOSA`) is no longer its own column — folded
+into `motiu` so the reason to doubt a row lives in one place. Renamed
+`revisio_necessaria` to `REVISAR` (matches the existing all-caps
+`OK`/`CODI_CORRECTE`/`EXCLOSA` action-column convention) and reordered
+left to right to match how a technician actually works a row: `REVISAR`
+first, then enough context to judge it (`resum_excel`, `codi_base`,
+`resum_base`, `discrepancia`, `motiu`, `confianca`, `ud`, `quantitat`,
+`import`), then the 3 editable columns last.
+
+### Non-blocking review: investigated, corrected course, not implemented
+
+Change 17's README claimed the review wait doesn't affect the current
+obra's BC3, only future ones via the dictionary — **that was wrong**,
+based on tracing only `Detecta suplements fixos` (which indeed ignores
+`Llegeix full revisat`). `Genera BC3` itself *does* read `Llegeix full
+revisat` and applies `EXCLOSA`/`CODI_CORRECTE` overrides directly when
+building the file (`genera-bc3.js` lines 20-31, 136-139) — a technician's
+correction on the sheet changes the BC3 that gets generated, not just
+future obras. Also found that "GENERAR BC3" is a separate, explicit link
+in the review email (`$execution.resumeUrl`, an n8n Wait-node webhook) —
+the technician already controls exactly when generation happens; the wait
+isn't a fixed timer.
+
+Making generation start immediately (skipping the wait) would mean
+losing the ability to apply corrections before the file is built, unless
+replaced with a "regenerate/resend after review" step — a real behavior
+change with business implications, not just a wiring fix. Not implemented
+this round; needs a decision from the user on which trade-off they want
+before touching it.
+
 ## Change 17: dictionary becomes an AI hint, not a shortcut; auto-approve confirmed rows
 
 The user pushed back on Change 16's approach: rather than keep adding narrow
