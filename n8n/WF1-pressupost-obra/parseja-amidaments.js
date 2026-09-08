@@ -165,6 +165,21 @@ function parseExcelGroup(rows, aiConfig) {
       break;
     }
   }
+  // FIX (2026-09-04): dos casos reals (obres 825.26 i 831.26) on la columna "codigo" o "ud"
+  // no es fa servir nomes per codis/unitats -- tambe hi porten una etiqueta interna que
+  // abans confonia el classificador de files de mode3 (que nomes mira si "ud" es buit o
+  // no per decidir 'partida' vs 'cap'/'detall'):
+  // 1. Columna "codigo" amb una etiqueta de NIVELL JERARQUIC ("Capítol"/"Obra elemental"/
+  //    "Activitat"/"Partida"...) en lloc d'un codi real, per a les files que fan de titol
+  //    de seccio -- aquestes files SI porten un valor a "ud" (l'index numeric del capitol,
+  //    p.ex. "01"), aixi que abans queien a 'partida' i acabaven com a centenars de
+  //    "partides" buides SENSE MATCH a Pendents de classificar (825.26: 637 files).
+  // 2. Columna "ud" amb un codi intern "SpcNNNN" per marcar files de detall/mesurament
+  //    (Uts/Llargada/Amplada/Alçada) en lloc de deixar-la buida -- abans qualsevol "ud" no
+  //    buit disparava 'partida' igualment, convertint centenars de linies de mesurament en
+  //    "partides" buides SENSE MATCH (831.26: 324 files).
+  const NIVELL_JERARQUIC = { capitol: 1, capitulo: 1, subcapitol: 2, subcapitulo: 2, 'obra elemental': 2, activitat: 3, actividad: 3, partida: 4 };
+
   let mode3 = false;
   let startRow = hIdx + 1;
   if (hIdx < 0) {
@@ -197,6 +212,35 @@ function parseExcelGroup(rows, aiConfig) {
     colmap.codigo = aiConfig.codigo; colmap.ud = aiConfig.ud; colmap.resumen = aiConfig.resumen;
     colmap.canpres = aiConfig.canpres; colmap.comentario = aiConfig.resumen;
     startRow = hIdx + 1;
+
+    // FIX (2026-09-08): la IA de configuracio de columnes va triar un cop una columna "ORDEN"
+    // (una simple numeracio 1,2,3,4... present a TOTES les files sense excepcio) com a
+    // "codigo", en lloc de la columna real "CAP" que porta les etiquetes de nivell
+    // jerarquic ("Capitol"/"Obra elemental"/"Activitat") a les files de titol i el codi
+    // real (p.ex. "G21B3002") a les files de partida (obra 825.26, fitxer amb capçalera
+    // "ORDEN|CAP|U.M.|TEXTO|MED|ACTIVIDAD"). Amb "codigo" apuntant a ORDEN, cap fila de
+    // titol coincidia mai amb NIVELL_JERARQUIC (el seu valor era nomes un numero), aixi que
+    // totes queien a 'partida' igual que les files reals -- 1966 titols i files d'altres
+    // oficis fora d'abast van acabar com a "partides" buides a Pendents de classificar,
+    // inflant el BC3 amb centenars de linies que el client no reconeixia. Com que la
+    // columna correcta es sempre reconeixible pel seu CONTINGUT (alguna fila de la mostra
+    // hi porta literalment una etiqueta de NIVELL_JERARQUIC), es revalida deterministament
+    // aqui: si la columna que ha triat la IA no porta mai cap etiqueta de nivell, pero
+    // n'hi ha una altra que si, es prefereix aquesta -- sense tornar a preguntar a la IA.
+    const teEtiquetaNivell = (colIx) => {
+      for (let r = startRow; r < Math.min(gridRows.length, startRow + 80); r++) {
+        const v = norm((gridRows[r] || [])[colIx]);
+        if (NIVELL_JERARQUIC[v] !== undefined) return true;
+      }
+      return false;
+    };
+    if (!teEtiquetaNivell(colmap.codigo)) {
+      const nCols = (gridRows[hIdx] || []).length;
+      for (let c = 0; c < nCols; c++) {
+        if (c === colmap.ud || c === colmap.resumen || c === colmap.canpres) continue;
+        if (teEtiquetaNivell(c)) { colmap.codigo = c; break; }
+      }
+    }
   }
   if (hIdx < 0) return { pending: true, tipus: 'EXCEL', mostra: gridRows.slice(0, 60) };
 
@@ -204,21 +248,6 @@ function parseExcelGroup(rows, aiConfig) {
   const g = (vals, key) => { const ix = colmap[key]; return ix === undefined ? null : (vals[ix] ?? null); };
   const hasMed = colmap['longitud'] !== undefined && colmap['n'] !== undefined;
   const lineParcialKey = colmap['cantidad'] !== undefined ? 'cantidad' : (colmap['parcial'] !== undefined ? 'parcial' : null);
-
-  // FIX (2026-09-04): dos casos reals (obres 825.26 i 831.26) on la columna "codigo" o "ud"
-  // no es fa servir nomes per codis/unitats -- tambe hi porten una etiqueta interna que
-  // abans confonia el classificador de files de mode3 (que nomes mira si "ud" es buit o
-  // no per decidir 'partida' vs 'cap'/'detall'):
-  // 1. Columna "codigo" amb una etiqueta de NIVELL JERARQUIC ("Capítol"/"Obra elemental"/
-  //    "Activitat"/"Partida"...) en lloc d'un codi real, per a les files que fan de titol
-  //    de seccio -- aquestes files SI porten un valor a "ud" (l'index numeric del capitol,
-  //    p.ex. "01"), aixi que abans queien a 'partida' i acabaven com a centenars de
-  //    "partides" buides SENSE MATCH a Pendents de classificar (825.26: 637 files).
-  // 2. Columna "ud" amb un codi intern "SpcNNNN" per marcar files de detall/mesurament
-  //    (Uts/Llargada/Amplada/Alçada) en lloc de deixar-la buida -- abans qualsevol "ud" no
-  //    buit disparava 'partida' igualment, convertint centenars de linies de mesurament en
-  //    "partides" buides SENSE MATCH (831.26: 324 files).
-  const NIVELL_JERARQUIC = { capitol: 1, capitulo: 1, subcapitol: 2, subcapitulo: 2, 'obra elemental': 2, activitat: 3, actividad: 3, partida: 4 };
 
   const out = [];
   let stack = [];

@@ -5,6 +5,78 @@ Mirror of the n8n Code nodes touched by these changes, from the n8n workflow
 workflow is edited directly in n8n; these files are kept here as a readable,
 version-controlled copy of what was changed and why.
 
+## Change 19: recover when the column-detection AI picks a trivial row-counter as "codigo"
+
+The user reported the latest BC3 for a *different* obra (825.26,
+"CORREDOR BRCAT BLANES", a civil/infrastructure corridor project — not the
+building-type obra 823.26 this session had been focused on) "included
+items I don't see in the Excel."
+
+### Investigation
+
+Pulled the real execution (#141) and the uploaded Excel/BC3. The Excel
+(`26187_EST_FORM.xlsx`, 2610 rows) is a completely different template
+than usual: header `ORDEN | CAP | U.M. | TEXTO | MED | ACTIVIDAD`, a
+3-level section hierarchy (`Capítol` → `Obra elemental` → `Activitat`)
+before each group of real line items, and dozens of trades this company
+doesn't do (asphalt paving, road markings, drainage, signage removal —
+this is a road/rail corridor, not a building). The generated BC3's
+`~D` chapter breakdown showed the smoking gun: **1966 of 2085 total
+items — 94% of the file — sat under "PENDIENTES DE CLASIFICAR"**, a
+catch-all bucket including literal section-title rows like `"TRAM1:
+ESTACIÓ BLANES - AV.D'EUROPA"` reproduced as if they were priceable line
+items.
+
+Traced it to `Detecta columnes IA`'s actual response for this file:
+`"codigo": 0` — column 0 is **"ORDEN"**, a plain 1, 2, 3, 4... row counter
+present identically on every row. The correct column is **"CAP"** (index
+1), which carries the literal hierarchy label (`Capítol`/`Obra
+elemental`/`Activitat`) on title rows and the real work-item code (e.g.
+`G21B3002`) on item rows — exactly the distinction the existing
+`NIVELL_JERARQUIC` mechanism (added in an earlier session, `parseja-
+amidaments.js` comment dated 2026-09-04, for this *same* obra 825.26)
+was built to detect. With `codigo` pointing at ORDEN, no row's `codigo`
+value ever matched a hierarchy label (it was always just a number), so
+every title row **and** every other-trade row fell through as a
+"partida" and got dumped into the BC3 as an empty, unpriced line — which
+is what read as "items I don't see in the Excel." The 35 real
+CIMENTACION/ESTRUCTURAS/MOVIMIENTO DE TIERRAS matches in the same BC3
+were checked and are correct (e.g. "Excavació de terreny...en rases,
+pous o fonaments" → `0.005 EXCAVACIÓN PARA ZAPATAS Y RIOSTRAS" — this
+catalog genuinely numbers its earthwork items with decimals like `0.3`/
+`0.005`, not a parsing artifact).
+
+### Fixes
+
+**`parseja-amidaments.js`** — added a deterministic post-check right
+after the AI's column config is applied: if the AI's chosen `codigo`
+column never carries a `NIVELL_JERARQUIC` label anywhere in the sampled
+rows, but another column does, switch to that column — no extra AI
+round-trip needed, since the correct answer is always recoverable from
+the data itself. Verified with a standalone test reproducing the exact
+825.26 header/row pattern (3 nested title levels get correctly filtered
+out and 3 real line items keep their correct `cap_desc` chapter chain)
+plus a regression case where the AI already picks the column correctly
+(no override fires).
+
+**`prepara-peticio-columnes-ia.js`** — the "codigo" guidance said to pick
+"an identifier for each row," language broad enough that the AI's own
+stated reasoning ("codigo és ORDEN... numeració/identificador de fila")
+technically satisfied it. Rewrote the rule to explicitly forbid picking
+any purely correlative, always-present numbering column, and to describe
+the real positive signal (same column alternates between a hierarchy
+label on title rows and a real reference code on item rows). A prompt
+fix alone was not trusted this time (Change 18 showed prose guidance can
+still get reasoned around) — the deterministic override above is what
+actually guarantees this specific failure can't recur; the prompt change
+is a second layer, not the fix itself.
+
+**Not re-verified against a live run** — same caveat as Change 18: the
+standalone test confirms the row-classification logic now behaves
+correctly for this exact pattern, but only a fresh execution of obra
+825.26 confirms the whole pipeline (matching, BC3 generation) produces a
+clean file end to end.
+
 ## Change 18: fix a real Change-17 regression, strengthen the composta rule, simplify the sheet
 
 The user re-ran obra 823.26 after Change 17 and reported the review
