@@ -1,0 +1,7 @@
+data/
+bot/
+calibratge.png
+replay/
+gravacions/
+__pycache__/
+*.pyc

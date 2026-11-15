@@ -1,0 +1,4 @@
+numpy>=1.24
+opencv-python>=4.8
+# Opcional, només per a un detector entrenat (--model):
+# ultralytics>=8.0
