@@ -3,11 +3,11 @@
 Un coach que aprèn dels **millors jugadors del món** i t'ajuda a jugar com ells.
 Fa servir l'API oficial de Clash Royale a través del **proxy de RoyaleAPI**.
 
-> **Per què no juga sol?** L'API (oficial i RoyaleAPI) només és de lectura: perfils,
-> batalles, rànquings. No permet jugar. Un bot que jugués automàticament simulant tocs
-> a la pantalla incompleix els termes de Supercell (risc de ban permanent) i és injust
-> per als rivals. Aquest projecte fa el que sí que funciona: estudiar els top i dir-te
-> exactament què has de jugar i millorar.
+El projecte té dues parts:
+
+- **`crcoach`** (aquest document): analitza els top jugadors i el teu compte amb l'API.
+- **`crbot`** ([BOT.md](BOT.md)): un bot que juga sol a les batalles amistoses i al Camp
+  d'entrenament, en un emulador d'Android. Fa servir les dades del coach per jugar com els millors.
 
 ## Què fa
 
