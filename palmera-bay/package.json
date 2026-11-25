@@ -1,0 +1,16 @@
+{
+  "name": "palmera-bay",
+  "version": "0.1.0",
+  "description": "Palmera Bay: joc de món obert original per al navegador (Three.js)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test tests/unit.test.mjs",
+    "test:browser": "node tests/browser.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "three": "0.170.0"
+  }
+}
