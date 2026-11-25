@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ca">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Palmera Bay</title>
+<style>
+  :root { --pink:#ff2fb3; --cyan:#25e8ff; --gold:#ffd23f; --bg:#0a0820; --ink:#f4f1ff; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:#000; color:var(--ink); font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; overflow:hidden; user-select:none; }
+  canvas#view { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  #hud { position:fixed; inset:0; pointer-events:none; transition:opacity .4s; text-shadow:0 1px 3px #000, 0 0 8px rgba(0,0,0,.6); }
+  .hidden { display:none !important; }
+  /* Cantonada superior esquerra */
+  #hud-top-left { position:absolute; left:18px; top:18px; width:220px; }
+  #minimap { width:220px; height:220px; border-radius:50%; border:3px solid rgba(255,255,255,.85); box-shadow:0 0 0 3px rgba(0,0,0,.5), 0 0 18px rgba(37,232,255,.35); background:#000; display:block; }
+  .bars { margin-top:10px; display:grid; gap:5px; }
+  .bar { height:10px; background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.35); border-radius:6px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:100%; transition:width .2s; }
+  .bar.hp i { background:linear-gradient(90deg,#ff5d73,#ff9a8b); }
+  .bar.ar i { background:linear-gradient(90deg,#2e86ff,#4cc9f0); }
+  .bar.car i { background:linear-gradient(90deg,#ffd23f,#fff0a0); }
+  #time { margin-top:8px; font-weight:700; letter-spacing:.1em; font-size:15px; opacity:.9; }
+  /* Cantonada superior dreta */
+  #hud-top-right { position:absolute; right:22px; top:16px; text-align:right; }
+  #money { font-size:34px; font-weight:800; color:#7dff9a; letter-spacing:.02em; }
+  #stars { font-size:30px; letter-spacing:.12em; margin-top:4px; }
+  #stars b { color:rgba(255,255,255,.22); font-weight:400; }
+  #stars b.on { color:var(--gold); text-shadow:0 0 10px rgba(255,210,63,.8); }
+  #stars b.flash { opacity:.35; }
+  #weapon { margin-top:6px; font-size:18px; font-weight:700; opacity:.95; }
+  /* Missió */
+  #mission { position:absolute; left:50%; top:20px; transform:translateX(-50%); min-width:320px; max-width:60vw; text-align:center; background:linear-gradient(180deg,rgba(10,8,32,.78),rgba(10,8,32,.55)); border:1px solid rgba(255,47,179,.6); border-radius:10px; padding:8px 18px; box-shadow:0 0 18px rgba(255,47,179,.25); }
+  #m-title { font-size:12px; letter-spacing:.25em; text-transform:uppercase; color:var(--pink); font-weight:800; }
+  #m-obj { font-size:19px; font-weight:700; margin-top:2px; }
+  #m-prog { font-size:14px; opacity:.85; min-height:1em; }
+  /* Velocímetre */
+  #speedo { position:absolute; right:26px; bottom:70px; text-align:right; }
+  #kmh { font-size:64px; font-weight:800; line-height:1; font-style:italic; color:var(--cyan); text-shadow:0 0 16px rgba(37,232,255,.55); }
+  #speedo small { font-size:14px; letter-spacing:.2em; opacity:.8; }
+  #speedo .bar { width:140px; margin:6px 0 0 auto; }
+  #radio { position:absolute; right:26px; bottom:26px; font-size:15px; font-weight:700; color:var(--pink); letter-spacing:.06em; }
+  #prompt { position:absolute; left:50%; bottom:22%; transform:translateX(-50%); background:rgba(10,8,32,.75); border:1px solid rgba(255,255,255,.4); border-radius:8px; padding:8px 18px; font-size:18px; font-weight:700; }
+  #reticle { position:absolute; left:50%; top:50%; width:0; height:0; }
+  #reticle i { position:absolute; left:-4px; top:-4px; width:8px; height:8px; border:2px solid rgba(255,255,255,.9); border-radius:50%; box-shadow:0 0 4px #000; transition:all .12s; }
+  #reticle.aim i { left:-11px; top:-11px; width:22px; height:22px; border-color:#fff; }
+  #toasts { position:absolute; left:50%; bottom:11%; transform:translateX(-50%); display:grid; gap:6px; justify-items:center; }
+  .toast { background:rgba(10,8,32,.8); border:1px solid rgba(37,232,255,.5); padding:6px 16px; border-radius:8px; font-weight:700; animation:in .2s; transition:opacity .5s; }
+  .toast.out { opacity:0; }
+  @keyframes in { from { transform:translateY(8px); opacity:0 } to { transform:none; opacity:1 } }
+  #banner { position:absolute; left:0; right:0; top:34%; text-align:center; }
+  #banner h1 { margin:0; font-size:clamp(38px,7vw,84px); font-weight:900; font-style:italic; letter-spacing:.06em; }
+  #banner p { margin:6px 0 0; font-size:clamp(15px,2vw,24px); font-weight:600; max-width:70vw; margin-inline:auto; }
+  #banner.pass h1 { color:#7dff9a; text-shadow:0 0 30px rgba(125,255,154,.7); }
+  #banner.fail h1 { color:#ff4d6d; text-shadow:0 0 30px rgba(255,77,109,.8); }
+  #banner.start h1 { color:var(--gold); text-shadow:0 0 30px rgba(255,210,63,.7); }
+  #vignette { position:absolute; inset:0; background:radial-gradient(ellipse at center, transparent 45%, rgba(255,0,40,.65)); opacity:0; }
+  #bigmap { position:absolute; inset:0; display:grid; place-items:center; background:rgba(5,4,20,.78); }
+  #bigmap canvas { width:min(88vh,88vw); height:min(88vh,88vw); border:3px solid var(--cyan); border-radius:10px; }
+  #bigmap .legend { margin-top:10px; font-weight:700; }
+  #shop { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:min(460px,90vw); background:rgba(10,8,32,.92); border:2px solid #ff6b35; border-radius:14px; padding:18px 22px; pointer-events:auto; }
+  #shop h2 { margin:0; letter-spacing:.2em; color:#ff6b35; }
+  #shop .cash { margin:4px 0 10px; color:#7dff9a; font-weight:800; font-size:22px; }
+  #shop .item { display:flex; gap:10px; padding:8px 4px; border-bottom:1px solid rgba(255,255,255,.12); font-size:17px; }
+  #shop .item b { width:24px; color:var(--gold); }
+  #shop .item span { margin-left:auto; color:#7dff9a; font-weight:700; }
+  #shop .item.off { opacity:.4; }
+  #shop .hint { opacity:.7; font-size:14px; margin:10px 0 0; }
+  /* Menús */
+  #menu { position:fixed; inset:0; display:grid; place-items:center; background:radial-gradient(ellipse at 50% 30%, rgba(80,20,110,.35), rgba(5,4,20,.78) 70%); z-index:5; }
+  #menu .panel { text-align:center; width:min(620px,94vw); padding:18px; }
+  #menu h1 { margin:0; white-space:nowrap; font-size:clamp(40px,8vw,84px); font-weight:900; font-style:italic; letter-spacing:.04em; background:linear-gradient(180deg,#ffe36e 10%,#ff2fb3 65%,#7b2ff7); -webkit-background-clip:text; background-clip:text; color:transparent; filter:drop-shadow(0 0 22px rgba(255,47,179,.55)); }
+  #menu .sub { margin:2px 0 22px; letter-spacing:.5em; color:var(--cyan); font-size:13px; font-weight:700; }
+  .btn { display:block; width:100%; margin:9px 0; padding:13px 18px; font:700 18px inherit; font-family:inherit; color:var(--ink); background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.35); border-radius:10px; cursor:pointer; letter-spacing:.08em; text-transform:uppercase; transition:all .15s; }
+  .btn:hover, .btn:focus-visible { background:linear-gradient(90deg,rgba(255,47,179,.5),rgba(37,232,255,.4)); border-color:#fff; transform:translateY(-1px); outline:none; }
+  .btn.off { opacity:.4; pointer-events:none; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:14px; margin:12px 0; font-weight:600; }
+  .row select, .row input[type=range] { flex:1; max-width:60%; font-size:16px; padding:6px; background:#17133a; color:var(--ink); border:1px solid rgba(255,255,255,.35); border-radius:6px; }
+  .keys { display:grid; grid-template-columns:auto 1fr; gap:6px 14px; text-align:left; font-size:15px; margin:10px auto; max-width:440px; }
+  .keys kbd { background:#1c1745; border:1px solid rgba(255,255,255,.4); border-radius:5px; padding:1px 8px; font-weight:700; justify-self:start; }
+  .note { font-size:13px; opacity:.75; margin-top:14px; }
+  #err { position:fixed; left:12px; bottom:12px; right:12px; background:#400; color:#fcc; padding:8px 12px; border-radius:8px; font:12px monospace; z-index:20; white-space:pre-wrap; max-height:30vh; overflow:auto; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="hud"></div>
+<div id="menu">
+  <div class="panel" id="p-main">
+    <h1>PALMERA BAY</h1>
+    <div class="sub">CIUTAT · NEÓ · CAOS</div>
+    <button class="btn" id="b-new">Nova partida</button>
+    <button class="btn off" id="b-cont">Continuar</button>
+    <button class="btn" id="b-opt">Opcions</button>
+    <button class="btn" id="b-keys">Controls</button>
+    <div class="note">Joc original. Tot el que veus (ciutat, personatges i missions) està inventat.</div>
+  </div>
+  <div class="panel hidden" id="p-opt">
+    <h1 style="font-size:46px">OPCIONS</h1>
+    <div class="row"><span>Qualitat gràfica</span><select id="o-q"><option value="low">Baixa</option><option value="medium">Mitjana</option><option value="high">Alta</option></select></div>
+    <div class="row"><span>Volum general</span><input id="o-vol" type="range" min="0" max="1" step="0.05"></div>
+    <div class="row"><span>Volum de la ràdio</span><input id="o-mus" type="range" min="0" max="1" step="0.05"></div>
+    <div class="row"><span>Sensibilitat del ratolí</span><input id="o-sens" type="range" min="0.3" max="2.5" step="0.1"></div>
+    <button class="btn" data-back>Enrere</button>
+  </div>
+  <div class="panel hidden" id="p-keys">
+    <h1 style="font-size:46px">CONTROLS</h1>
+    <div class="keys">
+      <kbd>W A S D</kbd><span>Moure's / conduir</span>
+      <kbd>Ratolí</kbd><span>Mirar · clic esquerre dispara · dret apunta</span>
+      <kbd>Shift</kbd><span>Córrer</span>
+      <kbd>Espai</kbd><span>Saltar · fre de mà (derrapar)</span>
+      <kbd>F</kbd><span>Entrar o sortir d'un vehicle</span>
+      <kbd>R · 1 2 3</kbd><span>Recarregar · canviar d'arma</span>
+      <kbd>E</kbd><span>Botiga d'armes · clàxon</span>
+      <kbd>N</kbd><span>Canviar d'emissora (al cotxe)</span>
+      <kbd>C</kbd><span>Mirar enrere lliurement (al cotxe)</span>
+      <kbd>M</kbd><span>Mapa gran</span>
+      <kbd>Esc</kbd><span>Pausa</span>
+    </div>
+    <button class="btn" data-back>Enrere</button>
+  </div>
+  <div class="panel hidden" id="p-pause">
+    <h1 style="font-size:56px">PAUSA</h1>
+    <button class="btn" id="b-resume">Continua</button>
+    <button class="btn" id="b-save">Desa la partida</button>
+    <button class="btn" id="b-opt2">Opcions</button>
+    <button class="btn" id="b-quit">Menú principal</button>
+  </div>
+</div>
+<script src="dist/game.js"></script>
+</body>
+</html>
